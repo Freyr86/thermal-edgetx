@@ -36,7 +36,7 @@ The Windows manager can preview, install, copy, and delete maps stored on the co
 
 ### Maps outside Switzerland
 
-The **Source** menu provides SWISSIMAGE, IGN Orthophotos, worldwide Sentinel-2 Cloudless, OpenAerialMap, Copernicus Sentinel-2, and a custom XYZ URL. Automatic mode uses SWISSIMAGE in Switzerland, IGN in France, and Sentinel-2 Cloudless everywhere else on Earth. OpenAerialMap remains available manually where local coverage offers more detailed imagery; its coverage is checked before downloading. Worldwide source attribution: EOxCloudless by EOX IT Services GmbH, contains modified Copernicus Sentinel data 2025.
+The **Source** menu provides national orthophotos for Switzerland, France, Italy, Spain, Austria and the Netherlands, plus worldwide Sentinel-2 Cloudless, OpenAerialMap, Copernicus Sentinel-2, and a custom XYZ URL. Automatic mode detects the country, selects the best known national source, and falls back to Sentinel-2 when needed. OpenAerialMap remains available manually where local coverage offers more detailed imagery. Worldwide source attribution: EOxCloudless by EOX IT Services GmbH, contains modified Copernicus Sentinel data 2025.
 
 For a national or commercial service that permits offline use, choose **Custom XYZ** and enter a URL containing `{z}`, `{x}`, and `{y}`. Users are responsible for complying with their provider's licence.
 

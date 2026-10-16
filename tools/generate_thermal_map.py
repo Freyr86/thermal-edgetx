@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import functools
 import io
 import json
 import math
@@ -42,6 +43,19 @@ IGN_ORTHOPHOTO = (
 EOX_WORLD = (
     "https://tiles.maps.eox.at/wmts/1.0.0/"
     "s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
+)
+AUSTRIA_ORTHO = (
+    "https://maps.wien.gv.at/basemap/bmaporthofoto30cm/"
+    "normal/google3857/{z}/{y}/{x}.jpeg"
+)
+SPAIN_PNOA = (
+    "https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&"
+    "LAYER=OI.OrthoimageCoverage&STYLE=default&FORMAT=image%2Fjpeg&"
+    "TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}"
+)
+NETHERLANDS_ORTHO = (
+    "https://service.pdok.nl/hwh/luchtfotorgb/wmts/v1_0/Actueel_ortho25/"
+    "OGC:1.0:GoogleMapsCompatible/{z}/{x}/{y}.jpeg"
 )
 SSL_CONTEXT = ssl._create_unverified_context()
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,14 +130,35 @@ def geographic_bounds(lat: float, lon: float, size_m: float) -> tuple[float, flo
     return south, lon - dlon, north, lon + dlon
 
 
+@functools.lru_cache(maxsize=64)
+def country_code(lat: float, lon: float) -> str:
+    """Return an ISO country code, with a silent worldwide fallback."""
+    params = urllib.parse.urlencode({
+        "lat": f"{lat:.7f}", "lon": f"{lon:.7f}", "zoom": 3,
+        "format": "jsonv2", "addressdetails": 1,
+    })
+    request = urllib.request.Request(
+        f"https://nominatim.openstreetmap.org/reverse?{params}",
+        headers={"User-Agent": "THERMAL-EdgeTX-map-manager/0.7"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12, context=SSL_CONTEXT) as response:
+            return json.load(response).get("address", {}).get("country_code", "").upper()
+    except Exception:
+        return ""
+
+
 def automatic_provider(lat: float, lon: float) -> str:
+    providers = {
+        "CH": "swissimage", "FR": "ign_france", "IT": "italy_ortho",
+        "ES": "spain_pnoa", "AT": "austria_ortho", "NL": "netherlands_ortho",
+    }
+    code = country_code(round(lat, 7), round(lon, 7))
+    if code:
+        return providers.get(code, "eox_world")
+    # Useful fallback when the country lookup service is temporarily offline.
     if 45.7 <= lat <= 47.9 and 5.7 <= lon <= 10.7:
         return "swissimage"
-    # Mainland France, then Corsica. Keep the Corsican west limit tight so a
-    # Google Maps pin dropped in the Mediterranean is not treated as land.
-    if (41.0 <= lat <= 51.5 and -5.5 <= lon <= 8.30) or \
-            (41.2 <= lat <= 43.1 and 8.50 <= lon <= 9.65):
-        return "ign_france"
     return "eox_world"
 
 
@@ -134,6 +169,12 @@ def provider_template(provider: str, parameter: str = "") -> str:
         return IGN_ORTHOPHOTO
     if provider == "eox_world":
         return EOX_WORLD
+    if provider == "austria_ortho":
+        return AUSTRIA_ORTHO
+    if provider == "spain_pnoa":
+        return SPAIN_PNOA
+    if provider == "netherlands_ortho":
+        return NETHERLANDS_ORTHO
     if provider == "openaerialmap":
         return "https://global.imagery.hotosm.org/{z}/{x}/{y}.png"
     if provider == "custom":
@@ -207,12 +248,47 @@ def build_copernicus(lat: float, lon: float, size_m: float, instance: str,
     return image
 
 
+def build_italy_ortho(lat: float, lon: float, size_m: float,
+                      progress=None) -> Image.Image:
+    """Download the Italian national 2012 colour orthophoto through WMS."""
+    south, west, north, east = geographic_bounds(lat, lon, size_m)
+    zone = "32" if lon < 12.0 else "33"
+    base = (
+        "http://wms.pcn.minambiente.it/ogc?"
+        "map=/ms_ogc/WMS_v1.3/raster/ortofoto_colore_12.map"
+    )
+    params = urllib.parse.urlencode({
+        "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": "1.1.1",
+        "LAYERS": f"OI.ORTOIMMAGINI.2012.{zone}", "STYLES": "",
+        "FORMAT": "image/jpeg", "SRS": "EPSG:4326",
+        "BBOX": f"{west},{south},{east},{north}",
+        # The national WMS rejects requests larger than 2048 pixels.
+        "WIDTH": 2000, "HEIGHT": 2000,
+    })
+    if progress:
+        progress(0, 1, "Téléchargement orthophoto Italie")
+    request = urllib.request.Request(f"{base}&{params}", headers={"User-Agent": "THERMAL-EdgeTX/0.7"})
+    with urllib.request.urlopen(request, timeout=90, context=SSL_CONTEXT) as response:
+        image = Image.open(io.BytesIO(response.read())).convert("RGB")
+    if progress:
+        progress(1, 1, "Orthophoto Italie téléchargée")
+    return image
+
+
 def build_source(lat: float, lon: float, size_m: float, progress=None,
                  provider: str = "auto", parameter: str = "") -> Image.Image:
+    was_auto = provider == "auto"
     if provider == "auto":
         provider = automatic_provider(lat, lon)
     if provider == "copernicus":
         return build_copernicus(lat, lon, size_m, parameter, progress)
+    if provider == "italy_ortho":
+        try:
+            return build_italy_ortho(lat, lon, size_m, progress)
+        except Exception:
+            if not was_auto:
+                raise
+            return build_source(lat, lon, size_m, progress, "eox_world")
     south, west, north, east = geographic_bounds(lat, lon, size_m)
     if provider == "openaerialmap":
         if progress:
@@ -235,7 +311,12 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
     available = 0
     for ty in range(ty0, ty1 + 1):
         for tx in range(tx0, tx1 + 1):
-            tile, present = download_tile(tx, ty, provider, parameter, source_zoom)
+            try:
+                tile, present = download_tile(tx, ty, provider, parameter, source_zoom)
+            except Exception:
+                if was_auto and provider != "eox_world":
+                    return build_source(lat, lon, size_m, progress, "eox_world")
+                raise
             mosaic.paste(tile, ((tx - tx0) * 256, (ty - ty0) * 256))
             if present:
                 available += 1
@@ -244,6 +325,8 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
             if progress:
                 progress(done, total, "Téléchargement satellite")
     if available == 0:
+        if was_auto and provider != "eox_world":
+            return build_source(lat, lon, size_m, progress, "eox_world")
         raise ValueError("Aucune image ouverte disponible ici. Choisissez Copernicus ou un fournisseur XYZ.")
     return mosaic.crop((round(left - tx0 * 256), round(top - ty0 * 256),
                         round(right - tx0 * 256), round(bottom - ty0 * 256)))
