@@ -36,7 +36,7 @@ Le gestionnaire Windows permet de prévisualiser, installer, copier et effacer l
 
 ### Cartes hors de Suisse
 
-Le menu **Source** propose SWISSIMAGE, IGN Orthophotos, OpenAerialMap, Copernicus Sentinel-2 et une URL XYZ personnalisée. Le mode automatique utilise SWISSIMAGE en Suisse, IGN en France et recherche une orthophoto OpenAerialMap ailleurs. La couverture OpenAerialMap est vérifiée avant le téléchargement. Si aucune image n'existe pour la zone, sélectionnez Copernicus et indiquez l'identifiant d'instance créé dans votre compte Copernicus Data Space/Sentinel Hub. Copernicus couvre le monde entier, avec une résolution native de 10 m.
+Le menu **Source** propose SWISSIMAGE, IGN Orthophotos, Sentinel-2 Cloudless mondial, OpenAerialMap, Copernicus Sentinel-2 et une URL XYZ personnalisée. Le mode automatique utilise SWISSIMAGE en Suisse, IGN en France et Sentinel-2 Cloudless ailleurs sur Terre. OpenAerialMap reste disponible manuellement lorsque sa couverture locale offre une image plus détaillée ; sa couverture est vérifiée avant le téléchargement. Attribution de la source mondiale : EOxCloudless par EOX IT Services GmbH, contient des données Copernicus Sentinel modifiées 2025.
 
 Pour un service national ou commercial autorisant l'utilisation hors ligne, choisissez **XYZ personnalisé** et saisissez une URL contenant `{z}`, `{x}` et `{y}`. Il appartient à l'utilisateur de respecter la licence du fournisseur.
 

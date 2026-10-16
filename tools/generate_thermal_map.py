@@ -39,6 +39,10 @@ IGN_ORTHOPHOTO = (
     "LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&"
     "TILEMATRIXSET=PM_0_19&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}"
 )
+EOX_WORLD = (
+    "https://tiles.maps.eox.at/wmts/1.0.0/"
+    "s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg"
+)
 SSL_CONTEXT = ssl._create_unverified_context()
 ROOT = Path(__file__).resolve().parents[1]
 DEV_PACKAGE = ROOT / "outputs" / "THERMAL-v0.5-SD"
@@ -120,7 +124,7 @@ def automatic_provider(lat: float, lon: float) -> str:
     if (41.0 <= lat <= 51.5 and -5.5 <= lon <= 8.30) or \
             (41.2 <= lat <= 43.1 and 8.50 <= lon <= 9.65):
         return "ign_france"
-    return "openaerialmap"
+    return "eox_world"
 
 
 def provider_template(provider: str, parameter: str = "") -> str:
@@ -128,6 +132,8 @@ def provider_template(provider: str, parameter: str = "") -> str:
         return SWISSIMAGE
     if provider == "ign_france":
         return IGN_ORTHOPHOTO
+    if provider == "eox_world":
+        return EOX_WORLD
     if provider == "openaerialmap":
         return "https://global.imagery.hotosm.org/{z}/{x}/{y}.png"
     if provider == "custom":
@@ -137,12 +143,13 @@ def provider_template(provider: str, parameter: str = "") -> str:
     raise ValueError(f"Fournisseur inconnu : {provider}")
 
 
-def download_tile(x: int, y: int, provider: str, parameter: str = "") -> tuple[Image.Image, bool]:
+def download_tile(x: int, y: int, provider: str, parameter: str = "",
+                  zoom: int = SOURCE_ZOOM) -> tuple[Image.Image, bool]:
     cache = CACHE / re.sub(r"[^a-z0-9]+", "_", provider.lower())
     cache.mkdir(parents=True, exist_ok=True)
-    cached = cache / f"{SOURCE_ZOOM}-{x}-{y}.img"
+    cached = cache / f"{zoom}-{x}-{y}.img"
     if not cached.exists():
-        url = provider_template(provider, parameter).format(z=SOURCE_ZOOM, x=x, y=y)
+        url = provider_template(provider, parameter).format(z=zoom, x=x, y=y)
         request = urllib.request.Request(url, headers={"User-Agent": "TX16S-ThermalMap/0.5"})
         try:
             with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
@@ -217,8 +224,9 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
             )
         if progress:
             progress(1, 1, "Couverture OpenAerialMap trouvée")
-    left, top = world_pixel(north, west, SOURCE_ZOOM)
-    right, bottom = world_pixel(south, east, SOURCE_ZOOM)
+    source_zoom = 14 if provider == "eox_world" else SOURCE_ZOOM
+    left, top = world_pixel(north, west, source_zoom)
+    right, bottom = world_pixel(south, east, source_zoom)
     tx0, ty0 = math.floor(left / 256), math.floor(top / 256)
     tx1, ty1 = math.floor((right - 1) / 256), math.floor((bottom - 1) / 256)
     mosaic = Image.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256))
@@ -227,7 +235,7 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
     available = 0
     for ty in range(ty0, ty1 + 1):
         for tx in range(tx0, tx1 + 1):
-            tile, present = download_tile(tx, ty, provider, parameter)
+            tile, present = download_tile(tx, ty, provider, parameter, source_zoom)
             mosaic.paste(tile, ((tx - tx0) * 256, (ty - ty0) * 256))
             if present:
                 available += 1
