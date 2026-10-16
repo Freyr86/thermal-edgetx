@@ -40,3 +40,7 @@ The **Source** menu provides national orthophotos for Switzerland, France, Italy
 
 For a national or commercial service that permits offline use, choose **Custom XYZ** and enter a URL containing `{z}`, `{x}`, and `{y}`. Users are responsible for complying with their provider's licence.
 
+### Request more detailed imagery
+
+If the automatic imagery is not detailed enough in your country or region, [open a request on GitHub](https://github.com/Freyr86/thermal-edgetx/issues/new). Include the country, region, a Google Maps link to a test location and, when known, the official imagery source URL. A source can only be integrated when it works without a mandatory account and its licence permits this use.
+

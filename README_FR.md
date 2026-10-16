@@ -40,3 +40,7 @@ Le menu **Source** propose les orthophotos nationales de Suisse, France, Italie,
 
 Pour un service national ou commercial autorisant l'utilisation hors ligne, choisissez **XYZ personnalisé** et saisissez une URL contenant `{z}`, `{x}` et `{y}`. Il appartient à l'utilisateur de respecter la licence du fournisseur.
 
+### Demander une carte plus précise
+
+Si les images automatiques ne sont pas assez précises dans votre pays ou votre région, [ouvrez une demande sur GitHub](https://github.com/Freyr86/thermal-edgetx/issues/new). Indiquez le pays, la région, un lien Google Maps vers un lieu de test et, si vous en connaissez une, l’adresse de la source cartographique officielle. Une source ne pourra être intégrée que si son service fonctionne sans compte obligatoire et si sa licence autorise cet usage.
+

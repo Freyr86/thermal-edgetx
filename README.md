@@ -13,6 +13,8 @@ Sous Windows, lancez `GENERER_CARTE_THERMAL.cmd`. Le gestionnaire détecte la ca
 
 Les sources disponibles couvrent la Suisse et le monde : SWISSIMAGE, OpenAerialMap, Copernicus Sentinel-2 et fournisseurs XYZ personnalisés.
 
+Si la carte automatique manque de précision dans un pays ou une région, [demandez l’ajout d’une source nationale](https://github.com/Freyr86/thermal-edgetx/issues/new) en joignant un lien Google Maps vers un lieu de test.
+
 Le widget attend les capteurs `Alt`, `VSpd`, `GPS`, `GSpd`, `Hdg`, `GAlt` et `Sats`.
 
 Compatible et testé avec EdgeTX 2.11.7 sur RadioMaster TX16S.
