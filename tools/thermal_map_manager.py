@@ -18,8 +18,9 @@ DEV_PACKAGE = engine.ROOT / "outputs" / "THERMAL-v0.5-SD"
 PACKAGE = DEV_PACKAGE if DEV_PACKAGE.exists() else engine.ROOT / "SD"
 LOCAL_MAPS = PACKAGE / "WIDGETS" / "THERMAL" / "MAPS"
 PROVIDERS = {
-    "Automatique (Suisse / monde ouvert)": "auto",
+    "Automatique (Suisse / France / monde ouvert)": "auto",
     "SWISSIMAGE (Suisse)": "swissimage",
+    "IGN Orthophotos (France)": "ign_france",
     "OpenAerialMap (monde, couverture variable)": "openaerialmap",
     "Copernicus Sentinel-2 (monde, compte requis)": "copernicus",
     "XYZ personnalisé": "custom",
@@ -226,7 +227,8 @@ class Manager(tk.Tk):
         ttk.Label(form, text="Paramètre").grid(row=3, column=0, sticky="w", pady=6)
         self.provider_parameter = tk.StringVar()
         ttk.Entry(form, textvariable=self.provider_parameter).grid(row=3, column=1, sticky="ew", padx=7, pady=6)
-        self.provider_help = ttk.Label(form, text="Choix automatique : SWISSIMAGE en Suisse, OpenAerialMap ailleurs.")
+        self.provider_help = ttk.Label(
+            form, text="Automatique : SWISSIMAGE en Suisse, IGN en France, OpenAerialMap ailleurs.")
         self.provider_help.grid(row=4, column=1, sticky="w", padx=7, pady=(0, 6))
         form.columnconfigure(1, weight=1)
 

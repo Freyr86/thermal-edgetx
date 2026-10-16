@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import io
+import json
 import math
 import re
 import shutil
@@ -17,6 +18,7 @@ import ssl
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -31,6 +33,11 @@ LEVELS = 4
 SWISSIMAGE = (
     "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/"
     "default/current/3857/{z}/{x}/{y}.jpeg"
+)
+IGN_ORTHOPHOTO = (
+    "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&"
+    "LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&FORMAT=image%2Fjpeg&"
+    "TILEMATRIXSET=PM_0_19&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}"
 )
 SSL_CONTEXT = ssl._create_unverified_context()
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,12 +115,19 @@ def geographic_bounds(lat: float, lon: float, size_m: float) -> tuple[float, flo
 def automatic_provider(lat: float, lon: float) -> str:
     if 45.7 <= lat <= 47.9 and 5.7 <= lon <= 10.7:
         return "swissimage"
+    # Mainland France, then Corsica. Keep the Corsican west limit tight so a
+    # Google Maps pin dropped in the Mediterranean is not treated as land.
+    if (41.0 <= lat <= 51.5 and -5.5 <= lon <= 8.30) or \
+            (41.2 <= lat <= 43.1 and 8.50 <= lon <= 9.65):
+        return "ign_france"
     return "openaerialmap"
 
 
 def provider_template(provider: str, parameter: str = "") -> str:
     if provider == "swissimage":
         return SWISSIMAGE
+    if provider == "ign_france":
+        return IGN_ORTHOPHOTO
     if provider == "openaerialmap":
         return "https://global.imagery.hotosm.org/{z}/{x}/{y}.png"
     if provider == "custom":
@@ -130,8 +144,13 @@ def download_tile(x: int, y: int, provider: str, parameter: str = "") -> tuple[I
     if not cached.exists():
         url = provider_template(provider, parameter).format(z=SOURCE_ZOOM, x=x, y=y)
         request = urllib.request.Request(url, headers={"User-Agent": "TX16S-ThermalMap/0.5"})
-        with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
-            cached.write_bytes(response.read())
+        try:
+            with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
+                cached.write_bytes(response.read())
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (204, 404):
+                raise
+            cached.write_bytes(b"")
         time.sleep(0.02)
     if cached.stat().st_size == 0:
         return Image.new("RGB", (256, 256), (35, 50, 40)), False
@@ -140,6 +159,21 @@ def download_tile(x: int, y: int, provider: str, parameter: str = "") -> tuple[I
     except Exception:
         cached.unlink(missing_ok=True)
         return Image.new("RGB", (256, 256), (35, 50, 40)), False
+
+
+def openaerialmap_has_coverage(south: float, west: float,
+                               north: float, east: float) -> bool:
+    """Check the OAM catalogue before attempting a whole tile download."""
+    query = urllib.parse.urlencode({
+        "bbox": f"{west},{south},{east},{north}",
+        "limit": 1,
+        "collections": "openaerialmap",
+    })
+    url = f"https://api.imagery.hotosm.org/stac/search?{query}"
+    request = urllib.request.Request(url, headers={"User-Agent": "TX16S-ThermalMap/0.6"})
+    with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
+        result = json.load(response)
+    return bool(result.get("features"))
 
 
 def build_copernicus(lat: float, lon: float, size_m: float, instance: str,
@@ -173,6 +207,16 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
     if provider == "copernicus":
         return build_copernicus(lat, lon, size_m, parameter, progress)
     south, west, north, east = geographic_bounds(lat, lon, size_m)
+    if provider == "openaerialmap":
+        if progress:
+            progress(0, 1, "Vérification de la couverture OpenAerialMap")
+        if not openaerialmap_has_coverage(south, west, north, east):
+            raise ValueError(
+                "Aucune image OpenAerialMap ne couvre cette zone. "
+                "Vérifiez la position ou choisissez Copernicus / un fournisseur XYZ."
+            )
+        if progress:
+            progress(1, 1, "Couverture OpenAerialMap trouvée")
     left, top = world_pixel(north, west, SOURCE_ZOOM)
     right, bottom = world_pixel(south, east, SOURCE_ZOOM)
     tx0, ty0 = math.floor(left / 256), math.floor(top / 256)
