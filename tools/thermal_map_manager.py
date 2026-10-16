@@ -88,6 +88,79 @@ def make_pack_preview(pack: Path) -> Image.Image:
     return canvas.crop((0, 0, 315, 315))
 
 
+class ZoomPreview(ttk.Frame):
+    def __init__(self, parent, initial_text: str):
+        super().__init__(parent)
+        self.original: Image.Image | None = None
+        self.photo: ImageTk.PhotoImage | None = None
+        self.scale = 1.0
+        toolbar = ttk.Frame(self)
+        toolbar.pack(fill="x", pady=(0, 4))
+        ttk.Button(toolbar, text="−", width=3, command=lambda: self.change_zoom(0.8)).pack(side="left")
+        ttk.Button(toolbar, text="+", width=3, command=lambda: self.change_zoom(1.25)).pack(side="left", padx=3)
+        ttk.Button(toolbar, text="Ajuster", command=self.fit).pack(side="left")
+        self.zoom_label = ttk.Label(toolbar, text="100 %")
+        self.zoom_label.pack(side="left", padx=8)
+        area = ttk.Frame(self)
+        area.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(area, background="#233228", highlightthickness=0)
+        xbar = ttk.Scrollbar(area, orient="horizontal", command=self.canvas.xview)
+        ybar = ttk.Scrollbar(area, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(xscrollcommand=xbar.set, yscrollcommand=ybar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        ybar.grid(row=0, column=1, sticky="ns")
+        xbar.grid(row=1, column=0, sticky="ew")
+        area.rowconfigure(0, weight=1)
+        area.columnconfigure(0, weight=1)
+        self.canvas.bind("<MouseWheel>", self._wheel)
+        self.set_message(initial_text)
+
+    def set_message(self, text: str) -> None:
+        self.original = None
+        self.photo = None
+        self.canvas.delete("all")
+        self.canvas.create_text(10, 10, text=text, fill="white", anchor="nw", width=340)
+        self.canvas.configure(scrollregion=(0, 0, 1, 1))
+        self.zoom_label.configure(text="—")
+
+    def set_image(self, image: Image.Image) -> None:
+        self.original = image.copy().convert("RGB")
+        self.after_idle(self.fit)
+
+    def fit(self) -> None:
+        if not self.original:
+            return
+        self.update_idletasks()
+        width = max(50, self.canvas.winfo_width() - 12)
+        height = max(50, self.canvas.winfo_height() - 12)
+        self.scale = min(width / self.original.width, height / self.original.height, 1.0)
+        self._draw()
+
+    def change_zoom(self, factor: float) -> None:
+        if not self.original:
+            return
+        self.scale = max(0.1, min(4.0, self.scale * factor))
+        self._draw()
+
+    def _wheel(self, event) -> str:
+        self.change_zoom(1.25 if event.delta > 0 else 0.8)
+        return "break"
+
+    def _draw(self) -> None:
+        if not self.original:
+            return
+        width = max(1, round(self.original.width * self.scale))
+        height = max(1, round(self.original.height * self.scale))
+        resized = self.original.resize((width, height), Image.Resampling.LANCZOS)
+        self.photo = ImageTk.PhotoImage(resized)
+        self.canvas.delete("all")
+        canvas_w, canvas_h = self.canvas.winfo_width(), self.canvas.winfo_height()
+        x, y = max(0, (canvas_w - width) // 2), max(0, (canvas_h - height) // 2)
+        self.canvas.create_image(x, y, image=self.photo, anchor="nw")
+        self.canvas.configure(scrollregion=(0, 0, max(width, canvas_w), max(height, canvas_h)))
+        self.zoom_label.configure(text=f"{self.scale * 100:.0f} %")
+
+
 class Manager(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -148,7 +221,7 @@ class Manager(tk.Tk):
         self.generate_button = ttk.Button(actions, text="2. Générer la carte", command=self.generate_new)
         self.generate_button.pack(side="right")
 
-        self.preview = ttk.Label(left, text="Collez un lien Google Maps puis affichez l’aperçu.", anchor="center")
+        self.preview = ZoomPreview(left, "Collez un lien Google Maps puis affichez l’aperçu.")
         self.preview.pack(fill="both", expand=True)
         self.status = ttk.Label(left, text="Prêt", anchor="w")
         self.status.pack(fill="x", pady=(8, 0))
@@ -165,7 +238,7 @@ class Manager(tk.Tk):
         self.listbox = tk.Listbox(right, height=12, exportselection=False)
         self.listbox.pack(fill="x", pady=8)
         self.listbox.bind("<<ListboxSelect>>", lambda _e: self.preview_selected())
-        self.installed_preview = ttk.Label(right, text="Sélectionnez une carte.", anchor="center")
+        self.installed_preview = ZoomPreview(right, "Sélectionnez une carte.")
         self.installed_preview.pack(fill="both", expand=True)
 
         buttons = ttk.Frame(right)
@@ -216,12 +289,8 @@ class Manager(tk.Tk):
         else:
             done(value)
 
-    def show_image(self, widget: ttk.Label, image: Image.Image, maximum=(560, 470)) -> None:
-        shown = image.copy()
-        shown.thumbnail(maximum, Image.Resampling.LANCZOS)
-        photo = ImageTk.PhotoImage(shown)
-        widget.configure(image=photo, text="")
-        widget.image = photo
+    def show_image(self, widget: ZoomPreview, image: Image.Image, maximum=None) -> None:
+        widget.set_image(image)
 
     def refresh_all(self) -> None:
         self.radio = detect_radio()
@@ -249,7 +318,7 @@ class Manager(tk.Tk):
         self.listbox.delete(0, "end")
         for entry in self.entries:
             self.listbox.insert("end", f"{entry['label']}   ({entry['size'] // 1000} × {entry['size'] // 1000} km)")
-        self.installed_preview.configure(image="", text="Aucune carte." if not self.entries else "Sélectionnez une carte.")
+        self.installed_preview.set_message("Aucune carte." if not self.entries else "Sélectionnez une carte.")
 
     def selected_entry(self) -> dict | None:
         selection = self.listbox.curselection()
@@ -263,7 +332,7 @@ class Manager(tk.Tk):
             image = make_pack_preview(self.current_root() / entry["slug"])
             self.show_image(self.installed_preview, image, (390, 300))
         except Exception as exc:
-            self.installed_preview.configure(image="", text=str(exc))
+            self.installed_preview.set_message(str(exc))
 
     def preview_new(self) -> None:
         name, url = self.name_var.get().strip(), self.url_var.get().strip()
