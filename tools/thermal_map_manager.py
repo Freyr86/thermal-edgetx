@@ -92,6 +92,7 @@ class Manager(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("THERMAL - Gestionnaire de cartes TX16S")
+        self._set_window_icon()
         self.geometry("1120x720")
         self.minsize(980, 650)
         self.radio: Path | None = None
@@ -101,6 +102,18 @@ class Manager(tk.Tk):
         self.busy = False
         self._build_ui()
         self.refresh_all()
+
+    def _set_window_icon(self) -> None:
+        ico = engine.ROOT / "assets" / "thermal-logo.ico"
+        png = engine.ROOT / "assets" / "thermal-logo-128.png"
+        try:
+            if ico.exists():
+                self.iconbitmap(default=str(ico))
+            if png.exists():
+                self.window_icon = tk.PhotoImage(file=str(png))
+                self.iconphoto(True, self.window_icon)
+        except tk.TclError:
+            pass
 
     def _build_ui(self) -> None:
         top = ttk.Frame(self, padding=10)
