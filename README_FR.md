@@ -34,3 +34,9 @@ La carte est orientée nord et possède quatre niveaux de zoom. Le widget ne pro
 
 Le gestionnaire Windows permet de prévisualiser, installer, copier et effacer les cartes du PC ou de la TX16S. Une carte standard couvre 5 × 5 km et contient 193 tuiles.
 
+### Cartes hors de Suisse
+
+Le menu **Source** propose SWISSIMAGE, OpenAerialMap, Copernicus Sentinel-2 et une URL XYZ personnalisée. Le mode automatique utilise SWISSIMAGE en Suisse et recherche une orthophoto ouverte ailleurs. Si aucune image OpenAerialMap n'existe pour la zone, sélectionnez Copernicus et indiquez l'identifiant d'instance créé dans votre compte Copernicus Data Space/Sentinel Hub. Copernicus couvre le monde entier, avec une résolution native de 10 m.
+
+Pour un service national ou commercial autorisant l'utilisation hors ligne, choisissez **XYZ personnalisé** et saisissez une URL contenant `{z}`, `{x}` et `{y}`. Il appartient à l'utilisateur de respecter la licence du fournisseur.
+

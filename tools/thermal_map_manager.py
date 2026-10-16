@@ -17,6 +17,13 @@ import generate_thermal_map as engine
 DEV_PACKAGE = engine.ROOT / "outputs" / "THERMAL-v0.5-SD"
 PACKAGE = DEV_PACKAGE if DEV_PACKAGE.exists() else engine.ROOT / "SD"
 LOCAL_MAPS = PACKAGE / "WIDGETS" / "THERMAL" / "MAPS"
+PROVIDERS = {
+    "Automatique (Suisse / monde ouvert)": "auto",
+    "SWISSIMAGE (Suisse)": "swissimage",
+    "OpenAerialMap (monde, couverture variable)": "openaerialmap",
+    "Copernicus Sentinel-2 (monde, compte requis)": "copernicus",
+    "XYZ personnalisé": "custom",
+}
 
 
 def detect_radio() -> Path | None:
@@ -211,6 +218,16 @@ class Manager(tk.Tk):
         ttk.Label(form, text="Lien Google Maps").grid(row=1, column=0, sticky="w", pady=6)
         self.url_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.url_var).grid(row=1, column=1, sticky="ew", padx=7, pady=6)
+        ttk.Label(form, text="Source").grid(row=2, column=0, sticky="w")
+        self.provider = ttk.Combobox(form, state="readonly", values=list(PROVIDERS), width=42)
+        self.provider.grid(row=2, column=1, sticky="ew", padx=7)
+        self.provider.current(0)
+        self.provider.bind("<<ComboboxSelected>>", lambda _e: self.update_provider_help())
+        ttk.Label(form, text="Paramètre").grid(row=3, column=0, sticky="w", pady=6)
+        self.provider_parameter = tk.StringVar()
+        ttk.Entry(form, textvariable=self.provider_parameter).grid(row=3, column=1, sticky="ew", padx=7, pady=6)
+        self.provider_help = ttk.Label(form, text="Choix automatique : SWISSIMAGE en Suisse, OpenAerialMap ailleurs.")
+        self.provider_help.grid(row=4, column=1, sticky="w", padx=7, pady=(0, 6))
         form.columnconfigure(1, weight=1)
 
         actions = ttk.Frame(left)
@@ -251,6 +268,17 @@ class Manager(tk.Tk):
         self.widget_status.pack(anchor="w")
         ttk.Button(right, text="Installer / mettre à jour le widget THERMAL",
                    command=self.install_widget).pack(fill="x", pady=(5, 0))
+
+    def update_provider_help(self) -> None:
+        provider = PROVIDERS[self.provider.get()]
+        messages = {
+            "auto": "Aucun paramètre nécessaire.",
+            "swissimage": "Couverture haute résolution de la Suisse.",
+            "openaerialmap": "Imagerie ouverte CC BY ; certaines zones peuvent être absentes.",
+            "copernicus": "Entrez votre identifiant d’instance Sentinel Hub (résolution 10 m).",
+            "custom": "Entrez une URL XYZ contenant {z}, {x} et {y}.",
+        }
+        self.provider_help.configure(text=messages[provider])
 
     def set_busy(self, busy: bool, text: str = "") -> None:
         self.busy = busy
@@ -336,28 +364,35 @@ class Manager(tk.Tk):
 
     def preview_new(self) -> None:
         name, url = self.name_var.get().strip(), self.url_var.get().strip()
+        provider = PROVIDERS[self.provider.get()]
+        parameter = self.provider_parameter.get().strip()
         if not name or not url:
             messagebox.showwarning("THERMAL", "Indiquez le nom et le lien Google Maps.")
             return
 
         def job():
             lat, lon = engine.resolve_google_url(url)
-            image = engine.build_source(lat, lon, 5000, self.report_progress)
-            return name, lat, lon, image
+            image = engine.build_source(lat, lon, 5000, self.report_progress,
+                                        provider, parameter)
+            return name, lat, lon, image, provider, parameter
 
         def done(value):
             self.pending = value
-            _, lat, lon, image = value
+            _, lat, lon, image, selected_provider, _ = value
             self.show_image(self.preview, image)
-            self.status.configure(text=f"Aperçu : {lat:.6f}, {lon:.6f} — zone 5 × 5 km")
+            actual = engine.automatic_provider(lat, lon) if selected_provider == "auto" else selected_provider
+            self.status.configure(text=f"Aperçu {actual} : {lat:.6f}, {lon:.6f} — zone 5 × 5 km")
 
         self.run_task(job, done, "Téléchargement de l’aperçu satellite…")
 
     def generate_new(self) -> None:
-        if not self.pending or self.pending[0] != self.name_var.get().strip():
+        current_provider = PROVIDERS[self.provider.get()]
+        current_parameter = self.provider_parameter.get().strip()
+        if (not self.pending or self.pending[0] != self.name_var.get().strip()
+                or self.pending[4] != current_provider or self.pending[5] != current_parameter):
             messagebox.showinfo("THERMAL", "Affichez d’abord l’aperçu de cette carte.")
             return
-        name, lat, lon, source = self.pending
+        name, lat, lon, source, provider, parameter = self.pending
         slug = engine.safe_slug(name)
         copy_to_radio = self.auto_copy.get()
         radio = self.radio

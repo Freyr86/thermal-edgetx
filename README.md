@@ -11,6 +11,8 @@ Widget de vol à voile pour RadioMaster TX16S : carte satellite hors ligne, trac
 
 Sous Windows, lancez `GENERER_CARTE_THERMAL.cmd`. Le gestionnaire détecte la carte SD EdgeTX, installe ou met à jour le widget et permet de créer des cartes locales 5 × 5 km à partir d’un lien Google Maps.
 
+Les sources disponibles couvrent la Suisse et le monde : SWISSIMAGE, OpenAerialMap, Copernicus Sentinel-2 et fournisseurs XYZ personnalisés.
+
 Le widget attend les capteurs `Alt`, `VSpd`, `GPS`, `GSpd`, `Hdg`, `GAlt` et `Sats`.
 
 Compatible et testé avec EdgeTX 2.11.7 sur RadioMaster TX16S.

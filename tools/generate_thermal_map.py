@@ -8,6 +8,8 @@ Run without arguments for an interactive prompt, or use:
 from __future__ import annotations
 
 import argparse
+import datetime
+import io
 import math
 import re
 import shutil
@@ -26,7 +28,7 @@ SOURCE_TILE = 256
 EDGE_TILE = 210
 LEVEL_BASE = 315
 LEVELS = 4
-WMTS = (
+SWISSIMAGE = (
     "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/"
     "default/current/3857/{z}/{x}/{y}.jpeg"
 )
@@ -35,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEV_PACKAGE = ROOT / "outputs" / "THERMAL-v0.5-SD"
 PACKAGE = DEV_PACKAGE if DEV_PACKAGE.exists() else ROOT / "SD"
 DEFAULT_TARGET = PACKAGE / "WIDGETS" / "THERMAL" / "MAPS"
-CACHE = ROOT / ".cache" / "swissimage-z16"
+CACHE = ROOT / ".cache" / "map-tiles"
 
 
 def find_edgetx_radios() -> list[Path]:
@@ -103,19 +105,73 @@ def geographic_bounds(lat: float, lon: float, size_m: float) -> tuple[float, flo
     return south, lon - dlon, north, lon + dlon
 
 
-def download_tile(x: int, y: int) -> Image.Image:
-    CACHE.mkdir(parents=True, exist_ok=True)
-    cached = CACHE / f"{SOURCE_ZOOM}-{x}-{y}.jpg"
+def automatic_provider(lat: float, lon: float) -> str:
+    if 45.7 <= lat <= 47.9 and 5.7 <= lon <= 10.7:
+        return "swissimage"
+    return "openaerialmap"
+
+
+def provider_template(provider: str, parameter: str = "") -> str:
+    if provider == "swissimage":
+        return SWISSIMAGE
+    if provider == "openaerialmap":
+        return "https://global.imagery.hotosm.org/{z}/{x}/{y}.png"
+    if provider == "custom":
+        if not all(token in parameter for token in ("{z}", "{x}", "{y}")):
+            raise ValueError("L'URL XYZ doit contenir {z}, {x} et {y}.")
+        return parameter
+    raise ValueError(f"Fournisseur inconnu : {provider}")
+
+
+def download_tile(x: int, y: int, provider: str, parameter: str = "") -> tuple[Image.Image, bool]:
+    cache = CACHE / re.sub(r"[^a-z0-9]+", "_", provider.lower())
+    cache.mkdir(parents=True, exist_ok=True)
+    cached = cache / f"{SOURCE_ZOOM}-{x}-{y}.img"
     if not cached.exists():
-        url = WMTS.format(z=SOURCE_ZOOM, x=x, y=y)
+        url = provider_template(provider, parameter).format(z=SOURCE_ZOOM, x=x, y=y)
         request = urllib.request.Request(url, headers={"User-Agent": "TX16S-ThermalMap/0.5"})
         with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
             cached.write_bytes(response.read())
         time.sleep(0.02)
-    return Image.open(cached).convert("RGB")
+    if cached.stat().st_size == 0:
+        return Image.new("RGB", (256, 256), (35, 50, 40)), False
+    try:
+        return Image.open(cached).convert("RGB"), True
+    except Exception:
+        cached.unlink(missing_ok=True)
+        return Image.new("RGB", (256, 256), (35, 50, 40)), False
 
 
-def build_source(lat: float, lon: float, size_m: float, progress=None) -> Image.Image:
+def build_copernicus(lat: float, lon: float, size_m: float, instance: str,
+                     progress=None) -> Image.Image:
+    if not instance.strip():
+        raise ValueError("Indiquez l'identifiant d'instance Copernicus Sentinel Hub.")
+    south, west, north, east = geographic_bounds(lat, lon, size_m)
+    today = datetime.date.today()
+    params = urllib.parse.urlencode({
+        "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": "1.1.1",
+        "LAYERS": "TRUE-COLOR", "FORMAT": "image/jpeg", "SRS": "EPSG:4326",
+        "BBOX": f"{west},{south},{east},{north}", "WIDTH": 2500, "HEIGHT": 2500,
+        "MAXCC": 30, "TIME": f"{today.year - 1}-01-01/{today.isoformat()}",
+        "SHOWLOGO": "false",
+    })
+    url = f"https://sh.dataspace.copernicus.eu/ogc/wms/{instance.strip()}?{params}"
+    request = urllib.request.Request(url, headers={"User-Agent": "TX16S-ThermalMap/0.5"})
+    if progress:
+        progress(0, 1, "Téléchargement Copernicus")
+    with urllib.request.urlopen(request, timeout=90, context=SSL_CONTEXT) as response:
+        image = Image.open(io.BytesIO(response.read())).convert("RGB")
+    if progress:
+        progress(1, 1, "Téléchargement Copernicus")
+    return image
+
+
+def build_source(lat: float, lon: float, size_m: float, progress=None,
+                 provider: str = "auto", parameter: str = "") -> Image.Image:
+    if provider == "auto":
+        provider = automatic_provider(lat, lon)
+    if provider == "copernicus":
+        return build_copernicus(lat, lon, size_m, parameter, progress)
     south, west, north, east = geographic_bounds(lat, lon, size_m)
     left, top = world_pixel(north, west, SOURCE_ZOOM)
     right, bottom = world_pixel(south, east, SOURCE_ZOOM)
@@ -124,13 +180,19 @@ def build_source(lat: float, lon: float, size_m: float, progress=None) -> Image.
     mosaic = Image.new("RGB", ((tx1 - tx0 + 1) * 256, (ty1 - ty0 + 1) * 256))
     total = (tx1 - tx0 + 1) * (ty1 - ty0 + 1)
     done = 0
+    available = 0
     for ty in range(ty0, ty1 + 1):
         for tx in range(tx0, tx1 + 1):
-            mosaic.paste(download_tile(tx, ty), ((tx - tx0) * 256, (ty - ty0) * 256))
+            tile, present = download_tile(tx, ty, provider, parameter)
+            mosaic.paste(tile, ((tx - tx0) * 256, (ty - ty0) * 256))
+            if present:
+                available += 1
             done += 1
-            print(f"Telechargement SWISSIMAGE : {done}/{total}", flush=True)
+            print(f"Telechargement {provider} : {done}/{total}", flush=True)
             if progress:
                 progress(done, total, "Téléchargement satellite")
+    if available == 0:
+        raise ValueError("Aucune image ouverte disponible ici. Choisissez Copernicus ou un fournisseur XYZ.")
     return mosaic.crop((round(left - tx0 * 256), round(top - ty0 * 256),
                         round(right - tx0 * 256), round(bottom - ty0 * 256)))
 
