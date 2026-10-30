@@ -5,7 +5,11 @@ local PI = math.pi
 local DEG = PI / 180
 local EARTH_R = 6371000
 local TILE = 210
-local SIZES = { 315, 630, 1260, 2520 }
+local LEGACY_SIZES = { 315, 630, 1260 }
+local SIZES_480 = { 480, 960, 1920 }
+local SIZES_800 = { 800, 1600, 3200 }
+local SIZES = LEGACY_SIZES
+local MAP_FOLDER = ""
 
 local points
 local maps = {}
@@ -13,6 +17,7 @@ local mapIndex = 1
 local selected = 1
 local zoom = 1
 local cache = {}
+local missing = {}
 local cacheLevel = 0
 local cacheCount = 0
 local savedAt = nil
@@ -20,9 +25,37 @@ local savedMessage = "TRIANGLE ENREGISTRE"
 local errorMessage = nil
 local lastTouchAt = -100
 local zoomEdit = false
+local ui = {}
+
+local function rect(x, y, w, h)
+  return { x=x, y=y, w=w, h=h }
+end
+
+local function hit(r, x, y)
+  return r and x >= r.x and x <= r.x + r.w
+    and y >= r.y and y <= r.y + r.h
+end
 
 local function activeMap()
   return maps[mapIndex]
+end
+
+local function configureMapProfile()
+  local profile = LCD_W > 500 and "800" or "480"
+  local wantedSizes = LCD_W > 500 and SIZES_800 or SIZES_480
+  local probe = "/WIDGETS/THERMAL/MAPS/" .. activeMap().slug
+    .. "/" .. profile .. "/Z0/0_0.png"
+  local file = io.open(probe, "r")
+  if file then
+    io.close(file)
+    MAP_FOLDER = profile .. "/"
+    SIZES = wantedSizes
+    TILE = profile == "800" and 400 or 210
+  else
+    MAP_FOLDER = ""
+    SIZES = LEGACY_SIZES
+    TILE = 210
+  end
 end
 
 local function loadMaps()
@@ -51,6 +84,16 @@ local function clamp(v, lo, hi)
   if v < lo then return lo end
   if v > hi then return hi end
   return v
+end
+
+local function updateLayout()
+  local width, height = LCD_W, LCD_H
+  local mapW
+  if width <= 500 then mapW = 315 else mapW = math.floor(width * 0.66) end
+  mapW = clamp(mapW, 315, width - 165)
+  ui.width, ui.height = width, height
+  ui.mapW, ui.mapH = mapW, height
+  ui.panelX, ui.panelW = mapW, width - mapW
 end
 
 local function centered(x, y, width, value, flags)
@@ -167,43 +210,76 @@ end
 
 local function viewPosition()
   local size = SIZES[zoom]
-  if zoom == 1 then return size, 0, 0 end
   local p = points[selected]
   local east, north = 0, 0
   if p.lat and p.lon then east, north = toLocal(p.lat, p.lon) end
   local area = activeMap().area
   local wx = size * 0.5 + east / area * size
   local wy = size * (2 / 3) - north / area * size
-  return size, wx - 157.5, wy - 136
+  return size, wx - ui.mapW * 0.5, wy - ui.mapH * 0.5
 end
 
 local function drawMap()
   local size, left, top = viewPosition()
-  lcd.drawFilledRectangle(0, 0, 315, 272, lcd.RGB(35, 50, 40))
-  local firstCol, lastCol = math.floor(left / TILE), math.floor((left + 315) / TILE)
-  local firstRow, lastRow = math.floor(top / TILE), math.floor((top + 272) / TILE)
+  lcd.drawFilledRectangle(0, 0, ui.mapW, ui.mapH, lcd.RGB(35, 50, 40))
+  local firstCol, lastCol = math.floor(left / TILE), math.floor((left + ui.mapW) / TILE)
+  local firstRow, lastRow = math.floor(top / TILE), math.floor((top + ui.mapH) / TILE)
   local maxTile = math.ceil(size / TILE) - 1
   if cacheLevel ~= zoom then
     cache = {}
+    missing = {}
     cacheLevel = zoom
     cacheCount = 0
+    collectgarbage("collect")
   end
+  local visible = {}
+  for row = firstRow, lastRow do
+    for col = firstCol, lastCol do
+      if row >= 0 and col >= 0 and row <= maxTile and col <= maxTile then
+        visible[tostring(col) .. "_" .. tostring(row)] = true
+      end
+    end
+  end
+  for key in pairs(cache) do
+    if not visible[key] then cache[key] = nil end
+  end
+  cacheCount = 0
+  for _ in pairs(cache) do cacheCount = cacheCount + 1 end
+  local newLoads = 0
+  local missingFiles = 0
+  local loadingFiles = 0
   for row = firstRow, lastRow do
     for col = firstCol, lastCol do
       if row >= 0 and col >= 0 and row <= maxTile and col <= maxTile then
         local tileKey = tostring(col) .. "_" .. tostring(row)
-        if not cache[tileKey] then
-          if cacheCount >= 16 then
-            cache = {}
-            cacheCount = 0
+        if not cache[tileKey] and not missing[tileKey] and newLoads < 1 then
+          local path = "/WIDGETS/THERMAL/MAPS/" .. activeMap().slug
+            .. "/" .. MAP_FOLDER .. "Z" .. tostring(zoom - 1) .. "/" .. tileKey .. ".png"
+          local file = io.open(path, "r")
+          if file then
+            io.close(file)
+            cache[tileKey] = Bitmap.open(path)
+            cacheCount = cacheCount + 1
+            newLoads = newLoads + 1
+          else
+            missing[tileKey] = true
           end
-          cache[tileKey] = Bitmap.open("/WIDGETS/THERMAL/MAPS/" .. activeMap().slug
-            .. "/Z" .. tostring(zoom - 1) .. "/" .. tileKey .. ".png")
-          cacheCount = cacheCount + 1
         end
-        lcd.drawBitmap(cache[tileKey], col * TILE - left, row * TILE - top)
+        if cache[tileKey] then
+          lcd.drawBitmap(cache[tileKey], col * TILE - left, row * TILE - top)
+        elseif missing[tileKey] then
+          missingFiles = missingFiles + 1
+        else
+          loadingFiles = loadingFiles + 1
+        end
       end
     end
+  end
+  if loadingFiles > 0 and missingFiles == 0 then
+    lcd.drawFilledRectangle(0, 0, ui.mapW, ui.mapH, lcd.RGB(35, 50, 40))
+    centered(0, ui.mapH * 0.43, ui.mapW,
+      "CHARGEMENT Z" .. tostring(zoom), MIDSIZE + BOLD + WHITE)
+    return
   end
 
   local screen = {}
@@ -233,53 +309,111 @@ local function drawMap()
       centered(screen[i][1] - 9, screen[i][2] - 6, 18, points[i].name, SMLSIZE + BOLD + WHITE)
     end
   end
-  lcd.drawFilledRectangle(3, 250, 144, 19, lcd.RGB(245, 245, 235))
-  lcd.drawText(6, 252, "Z" .. tostring(zoom) .. "  (c) swisstopo", SMLSIZE + lcd.RGB(5, 28, 61))
+  lcd.drawFilledRectangle(3, ui.mapH - 22, 144, 19, lcd.RGB(245, 245, 235))
+  lcd.drawText(6, ui.mapH - 20, "Z" .. tostring(zoom) .. "  (c) swisstopo", SMLSIZE + lcd.RGB(5, 28, 61))
+  if missingFiles > 0 then
+    lcd.drawFilledRectangle(155, ui.mapH - 22, 150, 19, lcd.RGB(205, 30, 35))
+    centered(155, ui.mapH - 20, 150, "TUILES ABSENTES", (TINSIZE or 0) + WHITE)
+  elseif MAP_FOLDER == "" and LCD_W > 500 then
+    lcd.drawFilledRectangle(155, ui.mapH - 22, 180, 19, lcd.RGB(255, 220, 0))
+    centered(155, ui.mapH - 20, 180, "CARTE A REGENERER",
+      (TINSIZE or 0) + lcd.RGB(5, 28, 61))
+  end
 end
 
 local function drawButton(x, y, width, height, label, fill, textColor)
+  local font = TINSIZE or 0
+  local _, textH = lcd.sizeText(label, font)
   lcd.drawFilledRectangle(x, y, width, height, fill)
   lcd.drawRectangle(x, y, width, height, lcd.RGB(5, 28, 61))
-  centered(x, y + math.floor((height - 18) / 2), width, label, SMLSIZE + BOLD + textColor)
+  centered(x, y + math.max(1, math.floor((height - textH) / 2)), width,
+    label, font + textColor)
 end
 
 local function drawPanel()
   local navy, white = lcd.RGB(5, 28, 61), WHITE
   local pale, blue = lcd.RGB(242, 244, 236), lcd.RGB(35, 105, 180)
-  lcd.drawFilledRectangle(315, 0, 165, 272, pale)
-  drawButton(319, 3, 157, 24, "CARTE: " .. activeMap().label, blue, white)
+  local x, width, height = ui.panelX, ui.panelW, ui.height
+  local pad = clamp(math.floor(width * 0.025), 4, 8)
+  local innerX, innerW = x + pad, width - pad * 2
+  local mapButtonH = height <= 300 and 24 or 38
+  local pointsY = mapButtonH + pad * 2
+  local pointH = height <= 300 and 32 or 44
+  local pointGap = pad
+  local pointW = (innerW - pointGap * 2) / 3
+  local bottomH = height <= 300 and 34 or 46
+  local bottomY = height - bottomH - pad
+  local zoomH = height <= 300 and 32 or 46
+  local zoomY = bottomY - zoomH - pad * 2
+  local rowsTop = pointsY + pointH + pad * 2
+  local rowsBottom = zoomY - pad
+  local rowStep = (rowsBottom - rowsTop) / 3
+  local adjustW = clamp(math.floor(innerW * 0.17), 27, 44)
+  local adjustH = clamp(math.floor(rowStep * 0.66), 30, 42)
+  local valueX = innerX + math.floor(innerW * 0.32)
+  local valueW = innerW - (valueX - innerX) - adjustW * 2 - pad * 2
+
+  lcd.drawFilledRectangle(x, 0, width, height, pale)
+  ui.mapButton = rect(innerX, pad, innerW, mapButtonH)
+  drawButton(ui.mapButton.x, ui.mapButton.y, ui.mapButton.w, ui.mapButton.h,
+    "CARTE: " .. activeMap().label, blue, white)
+  ui.pointButtons = {}
   for i = 1, 3 do
-    drawButton(321 + (i - 1) * 52, 31, 46, 32, points[i].name,
+    local bx = innerX + (i - 1) * (pointW + pointGap)
+    ui.pointButtons[i] = rect(bx, pointsY, pointW, pointH)
+    drawButton(bx, pointsY, pointW, pointH, points[i].name,
       i == selected and lcd.RGB(235, 55, 35) or blue, white)
   end
   local p = points[selected]
   local rows = {
-    { y=70, label="Rayon", value=tostring(math.floor(p.radius + 0.5)) .. " m" },
-    { y=111, label="Alt min", value=tostring(math.floor(p.minAlt + 0.5)) .. " m" },
-    { y=152, label="Alt max", value=tostring(math.floor(p.maxAlt + 0.5)) .. " m" }
+    { label="Rayon", value=tostring(math.floor(p.radius + 0.5)) .. " m" },
+    { label="Alt min", value=tostring(math.floor(p.minAlt + 0.5)) .. " m" },
+    { label="Alt max", value=tostring(math.floor(p.maxAlt + 0.5)) .. " m" }
   }
-  for _, row in ipairs(rows) do
-    lcd.drawText(321, row.y, row.label, SMLSIZE + navy)
-    centered(365, row.y, 48, row.value, SMLSIZE + BOLD + navy)
-    drawButton(416, row.y - 5, 27, 30, "-", blue, white)
-    drawButton(447, row.y - 5, 27, 30, "+", blue, white)
+  ui.minusButtons, ui.plusButtons = {}, {}
+  for i, row in ipairs(rows) do
+    local rowY = rowsTop + (i - 1) * rowStep
+    local buttonY = rowY + (rowStep - adjustH) * 0.5
+    local plusX = innerX + innerW - adjustW
+    local minusX = plusX - pad - adjustW
+    local rowFont = TINSIZE or 0
+    local _, rowTextH = lcd.sizeText(row.label, rowFont)
+    local textY = rowY + math.max(0, (rowStep - rowTextH) * 0.5)
+    lcd.drawText(innerX, textY, row.label, rowFont + navy)
+    centered(valueX, textY, valueW, row.value, rowFont + navy)
+    ui.minusButtons[i] = rect(minusX, buttonY, adjustW, adjustH)
+    ui.plusButtons[i] = rect(plusX, buttonY, adjustW, adjustH)
+    drawButton(minusX, buttonY, adjustW, adjustH, "-", blue, white)
+    drawButton(plusX, buttonY, adjustW, adjustH, "+", blue, white)
   end
-  drawButton(321, 193, 153, 32,
+  ui.zoomButton = rect(innerX, zoomY, innerW, zoomH)
+  drawButton(innerX, zoomY, innerW, zoomH,
     zoomEdit and ("ZOOM ACTIF  Z" .. tostring(zoom)) or ("ZOOM  Z" .. tostring(zoom)),
     zoomEdit and lcd.RGB(235, 55, 35) or blue, white)
-  drawButton(321, 233, 73, 34, "EFFACER", lcd.RGB(205, 30, 35), white)
-  drawButton(400, 233, 74, 34, "SAUVER", lcd.RGB(20, 145, 70), white)
+  local actionGap = pad * 2
+  local actionW = (innerW - actionGap) / 2
+  ui.clearButton = rect(innerX, bottomY, actionW, bottomH)
+  ui.saveButton = rect(innerX + actionW + actionGap, bottomY, actionW, bottomH)
+  drawButton(ui.clearButton.x, ui.clearButton.y, ui.clearButton.w, ui.clearButton.h,
+    "EFFACER", lcd.RGB(205, 30, 35), white)
+  drawButton(ui.saveButton.x, ui.saveButton.y, ui.saveButton.w, ui.saveButton.h,
+    "SAUVER", lcd.RGB(20, 145, 70), white)
 end
 
 local function drawScreen()
+  updateLayout()
   drawMap()
   drawPanel()
   if savedAt then
-    lcd.drawFilledRectangle(75, 95, 330, 75, lcd.RGB(20, 145, 70))
-    centered(75, 119, 330, savedMessage, MIDSIZE + BOLD + WHITE)
+    local boxW, boxH = ui.width * 0.68, clamp(ui.height * 0.28, 75, 120)
+    local boxX, boxY = (ui.width - boxW) / 2, (ui.height - boxH) / 2
+    lcd.drawFilledRectangle(boxX, boxY, boxW, boxH, lcd.RGB(20, 145, 70))
+    centered(boxX, boxY + boxH * 0.36, boxW, savedMessage, SMLSIZE + WHITE)
   elseif errorMessage then
-    lcd.drawFilledRectangle(75, 95, 330, 75, lcd.RGB(205, 30, 35))
-    centered(75, 119, 330, errorMessage, MIDSIZE + BOLD + WHITE)
+    local boxW, boxH = ui.width * 0.68, clamp(ui.height * 0.28, 75, 120)
+    local boxX, boxY = (ui.width - boxW) / 2, (ui.height - boxH) / 2
+    lcd.drawFilledRectangle(boxX, boxY, boxW, boxH, lcd.RGB(205, 30, 35))
+    centered(boxX, boxY + boxH * 0.36, boxW, errorMessage, SMLSIZE + WHITE)
   end
 end
 
@@ -304,9 +438,12 @@ local function placePoint(tx, ty)
 end
 
 local function init()
+  updateLayout()
+  if LCD_W > 500 then zoom = 2 end
   loadMaps()
   loadPoints()
   if not loadMapSelection() then chooseNearestMap() end
+  configureMapProfile()
 end
 
 local function run(event, touchState)
@@ -319,29 +456,31 @@ local function run(event, touchState)
     and getTime() - lastTouchAt > 30 then
     lastTouchAt = getTime()
     local x, y = touchState.x, touchState.y
-    if x < 315 then
+    if x < ui.mapW then
       placePoint(x, y)
-    elseif y >= 3 and y <= 27 then
+    elseif hit(ui.mapButton, x, y) then
       mapIndex = mapIndex % #maps + 1
       saveMapSelection()
+      configureMapProfile()
       cache = {}
+      missing = {}
       cacheLevel = 0
       cacheCount = 0
-    elseif y >= 31 and y <= 63 then
-      if x >= 321 and x < 369 then selected = 1
-      elseif x >= 373 and x < 421 then selected = 2
-      elseif x >= 425 and x <= 474 then selected = 3 end
-    elseif x >= 416 and x <= 474 then
-      local direction = x >= 447 and 1 or -1
-      if y >= 65 and y <= 95 then adjust(1, direction)
-      elseif y >= 106 and y <= 136 then adjust(2, direction)
-      elseif y >= 147 and y <= 177 then adjust(3, direction) end
-    elseif x >= 321 and x <= 474 and y >= 193 and y <= 225 then
+    elseif hit(ui.pointButtons[1], x, y) then selected = 1
+    elseif hit(ui.pointButtons[2], x, y) then selected = 2
+    elseif hit(ui.pointButtons[3], x, y) then selected = 3
+    elseif hit(ui.minusButtons[1], x, y) then adjust(1, -1)
+    elseif hit(ui.plusButtons[1], x, y) then adjust(1, 1)
+    elseif hit(ui.minusButtons[2], x, y) then adjust(2, -1)
+    elseif hit(ui.plusButtons[2], x, y) then adjust(2, 1)
+    elseif hit(ui.minusButtons[3], x, y) then adjust(3, -1)
+    elseif hit(ui.plusButtons[3], x, y) then adjust(3, 1)
+    elseif hit(ui.zoomButton, x, y) then
       zoomEdit = not zoomEdit
-    elseif x >= 321 and x <= 394 and y >= 233 and y <= 267 then
+    elseif hit(ui.clearButton, x, y) then
       points = { newPoint("A"), newPoint("B"), newPoint("C") }
       savePoints("POINTS A-B-C EFFACES")
-    elseif x >= 400 and x <= 474 and y >= 233 and y <= 267 then
+    elseif hit(ui.saveButton, x, y) then
       saveMapSelection()
       savePoints()
     end
@@ -351,7 +490,7 @@ local function run(event, touchState)
     savePoints()
   elseif zoomEdit and (event == EVT_VIRTUAL_INC or event == EVT_VIRTUAL_INC_REPT
     or event == EVT_VIRTUAL_NEXT or event == EVT_VIRTUAL_NEXT_REPT) then
-    zoom = math.min(4, zoom + 1)
+    zoom = math.min(3, zoom + 1)
     cacheLevel = 0
   elseif zoomEdit and (event == EVT_VIRTUAL_DEC or event == EVT_VIRTUAL_DEC_REPT
     or event == EVT_VIRTUAL_PREV or event == EVT_VIRTUAL_PREV_REPT) then

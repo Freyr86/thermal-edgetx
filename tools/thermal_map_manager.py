@@ -86,19 +86,29 @@ def delete_pack(pack: Path, progress=None) -> None:
 
 
 def make_pack_preview(pack: Path) -> Image.Image:
-    folder = pack / "Z0"
-    canvas = Image.new("RGB", (420, 420), (35, 50, 40))
+    folder = pack / "800" / "Z0"
+    if not folder.exists():
+        folder = pack / "480" / "Z0"
+    if not folder.exists():
+        folder = pack / "Z0"
+    try:
+        base_size = int(folder.parent.name)
+    except ValueError:
+        base_size = 315
+    tile_size = 400 if folder.parent.name == "800" else 210
+    tile_count = math.ceil(base_size / tile_size)
+    canvas = Image.new("RGB", (base_size, base_size), (35, 50, 40))
     found = False
-    for row in range(2):
-        for col in range(2):
+    for row in range(tile_count):
+        for col in range(tile_count):
             tile = folder / f"{col}_{row}.png"
             if tile.exists():
                 with Image.open(tile) as image:
-                    canvas.paste(image.convert("RGB"), (col * 210, row * 210))
+                    canvas.paste(image.convert("RGB"), (col * tile_size, row * tile_size))
                 found = True
     if not found:
         raise FileNotFoundError("Aucune tuile Z0 trouvée.")
-    return canvas.crop((0, 0, 315, 315))
+    return canvas
 
 
 class ZoomPreview(ttk.Frame):
@@ -421,9 +431,13 @@ class Manager(tk.Tk):
             self.refresh_all()
             destination = "PC et TX16S" if copied else "bibliothèque du PC"
             self.status.configure(text=f"Carte {name} créée dans : {destination}")
-            messagebox.showinfo("THERMAL", f"Carte « {name} » créée avec 4 zooms.\nDestination : {destination}.")
+            messagebox.showinfo(
+                "THERMAL",
+                f"Carte « {name} » créée avec 3 zooms pour les écrans 480 et 800.\n"
+                f"Destination : {destination}.",
+            )
 
-        self.run_task(job, done, "Création des 4 niveaux de zoom…")
+        self.run_task(job, done, "Création des profils 480 et 800…")
 
     def install_widget(self) -> None:
         self.refresh_all()

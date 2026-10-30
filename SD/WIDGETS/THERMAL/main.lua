@@ -1,5 +1,5 @@
 -- THERMAL - Assistant thermique plein ecran pour EdgeTX 2.11 / TX16S
--- Version 0.5 - cartes multiples choisies depuis THMCFG
+-- Version 0.6 - affichage adaptatif et zoom par potentiometre
 -- Sources attendues : Alt, VSpd, GPS, GSpd, Hdg, GAlt, Sats
 
 local NAME = "Thermal"
@@ -7,8 +7,10 @@ local PI = math.pi
 local DEG = PI / 180
 local EARTH_R = 6371000
 local SECTORS = 16
-local MAP_TILE = 210
-local MAP_SIZES = { 315, 630, 1260, 2520 }
+local LEGACY_MAP_TILE = 210
+local LEGACY_MAP_SIZES = { 315, 630, 1260 }
+local MAP_SIZES_480 = { 480, 960, 1920 }
+local MAP_SIZES_800 = { 800, 1600, 3200 }
 
 local options = {
   { "HomeSw",   SWITCH, 0 },
@@ -20,7 +22,9 @@ local options = {
   { "VarioMax", VALUE, 5, 1, 10 },
   { "Entree",   FILE, "", "SOUNDS" },
   { "Sortie",   FILE, "", "SOUNDS" },
-  { "ResetSw",  SWITCH, 0 }
+  { "ResetSw",  SWITCH, 0 },
+  -- Place en dernier pour ne pas decaler les options des versions existantes.
+  { "ZoomPot",  SOURCE, 0 }
 }
 
 local function clamp(v, lo, hi)
@@ -43,6 +47,24 @@ end
 local function sourceId(name)
   local info = getFieldInfo(name)
   return info and info.id or nil
+end
+
+local function configureMapProfile(w)
+  local profile = LCD_W > 500 and "800" or "480"
+  local sizes = LCD_W > 500 and MAP_SIZES_800 or MAP_SIZES_480
+  local probe = "/WIDGETS/THERMAL/MAPS/" .. (w.mapDef and w.mapDef.slug or "")
+    .. "/" .. profile .. "/Z0/0_0.png"
+  local file = io.open(probe, "r")
+  if file then
+    io.close(file)
+    w.mapFolder = profile .. "/"
+    w.mapSizes = sizes
+    w.mapTile = profile == "800" and 400 or 210
+  else
+    w.mapFolder = ""
+    w.mapSizes = LEGACY_MAP_SIZES
+    w.mapTile = LEGACY_MAP_TILE
+  end
 end
 
 local function trianglePath()
@@ -91,10 +113,12 @@ local function loadMapSelection(w)
     w.mapDef = chosen
     w.mapX, w.mapY = 0, 0
     w.mapCache = {}
+    w.mapMissing = {}
     w.mapCacheLevel = 0
     w.mapCacheCount = 0
     w.track = {}
   end
+  configureMapProfile(w)
 end
 
 local function defaultPoint(name)
@@ -300,8 +324,11 @@ local function create(zone, opts)
     mapX = 0,
     mapY = 0,
     zoom = 1,
+    zoomFromPot = false,
+    zoomPotScale = 1,
     zoomEdit = false,
     mapCache = {},
+    mapMissing = {},
     mapCacheLevel = 0,
     mapCacheCount = 0,
     lastTouchAt = -100,
@@ -331,6 +358,36 @@ local function update(w, opts)
   loadMapSelection(w)
   loadTriangle(w)
   w.lastTriangleLoad = getTime()
+end
+
+local function updateZoomFromPot(w)
+  local source = w.options.ZoomPot
+  if not source or source == 0 then
+    w.zoomFromPot = false
+    return
+  end
+  local value = getValue(source)
+  if type(value) ~= "number" then return end
+
+  -- Selon la cible EdgeTX, une source analogique peut etre exprimee sur
+  -- -1..1, -100..100 ou -1024..1024. On memorise la plus grande echelle
+  -- observee afin que le centre du potentiometre ne fausse pas la detection.
+  local absolute = math.abs(value)
+  if absolute > 110 then
+    w.zoomPotScale = 1024
+  elseif absolute > 1.1 and w.zoomPotScale < 100 then
+    w.zoomPotScale = 100
+  end
+  local limit = w.zoomPotScale
+  -- Sens inverse : glisseur vers le haut = vue plus large (Z1), vers le bas
+  -- = vue rapprochee (Z3). Les trois positions donnent exactement Z1/Z2/Z3.
+  local normalized = clamp((limit - value) / (2 * limit), 0, 0.9999)
+  local level = math.floor(normalized * 3) + 1
+  w.zoomFromPot = true
+  if level ~= w.zoom then
+    w.zoom = level
+    w.mapCacheLevel = 0
+  end
 end
 
 local function playSelectedSound(filename)
@@ -474,6 +531,7 @@ end
 
 local function process(w)
   local now = getTime()
+  updateZoomFromPot(w)
   if now - w.lastProcess < 4 then return end
   w.lastProcess = now
 
@@ -568,41 +626,78 @@ end
 
 local function drawMap(w, x, y, width, height, colors)
   lcd.drawFilledRectangle(x, y, width, height, colors.mapBg)
-  local level = clamp(w.zoom or 1, 1, 4)
-  local size = MAP_SIZES[level]
+  local level = clamp(w.zoom or 1, 1, 3)
+  local size = w.mapSizes[level]
   local anchorX, anchorY = width * 0.50, height * 0.667
   local area = w.mapDef.area
   local aircraftWorldX = size * 0.5 + w.mapX / area * size
   local aircraftWorldY = size * (2 / 3) - w.mapY / area * size
   local left, top = aircraftWorldX - anchorX, aircraftWorldY - anchorY
-  local firstCol = math.floor(left / MAP_TILE)
-  local lastCol = math.floor((left + width) / MAP_TILE)
-  local firstRow = math.floor(top / MAP_TILE)
-  local lastRow = math.floor((top + height) / MAP_TILE)
-  local maxTile = math.ceil(size / MAP_TILE) - 1
+  local tileSize = w.mapTile or LEGACY_MAP_TILE
+  local firstCol = math.floor(left / tileSize)
+  local lastCol = math.floor((left + width) / tileSize)
+  local firstRow = math.floor(top / tileSize)
+  local lastRow = math.floor((top + height) / tileSize)
+  local maxTile = math.ceil(size / tileSize) - 1
   if w.mapCacheLevel ~= level then
     w.mapCache = {}
+    w.mapMissing = {}
     w.mapCacheLevel = level
     w.mapCacheCount = 0
+    collectgarbage("collect")
   end
+  local visible = {}
+  for row = firstRow, lastRow do
+    for col = firstCol, lastCol do
+      if col >= 0 and row >= 0 and col <= maxTile and row <= maxTile then
+        visible[tostring(col) .. "_" .. tostring(row)] = true
+      end
+    end
+  end
+  for key in pairs(w.mapCache) do
+    if not visible[key] then w.mapCache[key] = nil end
+  end
+  w.mapCacheCount = 0
+  for _ in pairs(w.mapCache) do w.mapCacheCount = w.mapCacheCount + 1 end
+  local newLoads = 0
+  local missingFiles = 0
+  local loadingFiles = 0
   for row = firstRow, lastRow do
     for col = firstCol, lastCol do
       if col >= 0 and row >= 0 and col <= maxTile and row <= maxTile then
         local key = tostring(col) .. "_" .. tostring(row)
         local bitmap = w.mapCache[key]
-        if not bitmap then
-          if w.mapCacheCount >= 12 then
-            w.mapCache = {}
-            w.mapCacheCount = 0
+        if not bitmap and not w.mapMissing[key] and newLoads < 1 then
+          local path = "/WIDGETS/THERMAL/MAPS/" .. w.mapDef.slug
+            .. "/" .. w.mapFolder .. "Z" .. tostring(level - 1) .. "/" .. key .. ".png"
+          local file = io.open(path, "r")
+          if file then
+            io.close(file)
+            bitmap = Bitmap.open(path)
+            w.mapCache[key] = bitmap
+            w.mapCacheCount = w.mapCacheCount + 1
+            newLoads = newLoads + 1
+          else
+            w.mapMissing[key] = true
           end
-          bitmap = Bitmap.open("/WIDGETS/THERMAL/MAPS/" .. w.mapDef.slug
-            .. "/Z" .. tostring(level - 1) .. "/" .. key .. ".png")
-          w.mapCache[key] = bitmap
-          w.mapCacheCount = w.mapCacheCount + 1
         end
-        lcd.drawBitmap(bitmap, x + col * MAP_TILE - left, y + row * MAP_TILE - top)
+        if bitmap then
+          lcd.drawBitmap(bitmap, x + col * tileSize - left, y + row * tileSize - top)
+        elseif w.mapMissing[key] then
+          missingFiles = missingFiles + 1
+        else
+          loadingFiles = loadingFiles + 1
+        end
       end
     end
+  end
+  -- Ne jamais presenter une carte partiellement chargee. Les quelques tuiles
+  -- deja dessinees sont masquees jusqu'a ce que l'image visible soit complete.
+  if loadingFiles > 0 and missingFiles == 0 then
+    lcd.drawFilledRectangle(x, y, width, height, colors.mapBg)
+    centered(x, y + height * 0.43, width,
+      "CHARGEMENT Z" .. tostring(level), MIDSIZE + BOLD + colors.text)
+    return
   end
   lcd.drawFilledRectangle(x + 3, y + 3, 100, 18, lcd.RGB(245, 245, 235))
   lcd.drawText(x + 6, y + 5, w.mapDef.label, SMLSIZE + colors.text)
@@ -671,16 +766,13 @@ local function drawMap(w, x, y, width, height, colors)
 
   lcd.drawFilledRectangle(x + 2, y + 2, 128, 18, lcd.RGB(245, 245, 235))
   lcd.drawText(x + 5, y + 4, "GPS " .. tostring(round(w.sats)) .. "  Z" .. tostring(level), SMLSIZE + colors.text)
-  if w.zoomEdit then
-    lcd.drawFilledRectangle(x + 133, y + 2, 105, 18, colors.activePoint)
-    centered(x + 133, y + 4, 105, "ZOOM ACTIF", SMLSIZE + BOLD + WHITE)
+  if missingFiles > 0 then
+    lcd.drawFilledRectangle(x + 133, y + 2, 150, 18, colors.activePoint)
+    centered(x + 133, y + 4, 150, "TUILES ABSENTES", (TINSIZE or 0) + WHITE)
+  elseif w.mapFolder == "" and LCD_W > 500 then
+    lcd.drawFilledRectangle(x + 133, y + 2, 175, 18, colors.maximum)
+    centered(x + 133, y + 4, 175, "CARTE A REGENERER", (TINSIZE or 0) + colors.text)
   end
-  local zoomFill = w.zoomEdit and colors.activePoint or lcd.RGB(245, 245, 235)
-  local zoomText = w.zoomEdit and WHITE or colors.text
-  lcd.drawFilledRectangle(x + width - 73, y + 27, 68, 43, zoomFill)
-  lcd.drawRectangle(x + width - 73, y + 27, 68, 43, colors.text)
-  centered(x + width - 73, y + 34, 68, "ZOOM", SMLSIZE + BOLD + zoomText)
-  centered(x + width - 73, y + 50, 68, "Z" .. tostring(level), SMLSIZE + BOLD + zoomText)
   lcd.drawFilledRectangle(x + 2, y + height - 17, 78, 15, lcd.RGB(245, 245, 235))
   lcd.drawText(x + 4, y + height - 16, "(c) swisstopo", SMLSIZE + colors.text)
 end
@@ -722,7 +814,9 @@ local function drawPolarLine(values, cx, cy, radius, maxV, color, variableColor,
 end
 
 local function drawThermal(w, cx, cy, radius, colors)
-  centered(cx - radius, cy - radius - 22, radius * 2, "THERMIQUE", SMLSIZE + BOLD + colors.text)
+  local titleGap = radius >= 90 and 38 or 28
+  centered(cx - radius, cy - radius - titleGap, radius * 2,
+    "THERMIQUE", SMLSIZE + BOLD + colors.text)
   lcd.drawFilledCircle(cx, cy, radius, colors.wheelBg)
   lcd.drawCircle(cx, cy, radius, colors.text)
   lcd.drawCircle(cx, cy, radius * 0.25, colors.grid)
@@ -768,11 +862,21 @@ local function drawThermal(w, cx, cy, radius, colors)
 end
 
 local function drawTile(x, y, width, height, label, value, unit, colors)
+  -- Une police double depasse dans les six colonnes de l'ecran 800 x 480.
+  -- MIDSIZE reste lisible et convient aussi aux valeurs de chronometre.
+  local valueFont = MIDSIZE
+  local valueY = height >= 78 and y + 24 or y + 19
+  local labelFont = TINSIZE or 0
+  local labelStyle = 0
+  local unitFont = SMLSIZE
+  if lcd.sizeText(unit, unitFont) > width - 6 then
+    unitFont = TINSIZE or 0
+  end
   lcd.drawFilledRectangle(x, y, width, height, colors.tileBg)
   lcd.drawRectangle(x, y, width, height, colors.border)
-  centered(x, y + 2, width, label, SMLSIZE + colors.text)
-  centered(x, y + 19, width, value, MIDSIZE + BOLD + colors.text)
-  centered(x, y + height - 14, width, unit, SMLSIZE + colors.text)
+  centered(x, y + 2, width, label, labelFont + labelStyle + colors.text)
+  centered(x, valueY, width, value, valueFont + BOLD + colors.text)
+  centered(x, y + height - 20, width, unit, unitFont + colors.text)
 end
 
 local function formatDistance(meters)
@@ -808,17 +912,26 @@ local function drawFullScreen(w)
     activePoint = lcd.RGB(235, 55, 35)
   }
 
-  local width, height = LCD_W, LCD_H
-  local tileH = 62
+  local z = w.zone
+  local originX, originY = z.x or 0, z.y or 0
+  local width, height = z.w or LCD_W, z.h or LCD_H
+  local tileH = clamp(math.floor(height * 0.23), 62, 92)
   local mapH = height - tileH
-  drawMap(w, 0, 0, 315, mapH, colors)
-  lcd.drawFilledRectangle(315, 0, width - 315, mapH, colors.mapBg)
-  drawThermal(w, 398, 108, 72, colors)
+  local mapW = width
+  local sideW = math.max(150, math.floor(width * 0.34))
+  local wheelRadius = clamp(math.floor(math.min(sideW * 0.38, mapH * 0.31)), 58, 115)
+  local wheelX = originX + width - sideW * 0.5
+  local wheelY = originY + mapH * (height >= 400 and 0.40 or 0.46)
+  w.layout = { mapX=originX, mapY=originY, mapW=mapW, mapH=mapH }
+  drawMap(w, originX, originY, mapW, mapH, colors)
+  drawThermal(w, wheelX, wheelY, wheelRadius, colors)
 
   if not w.validGPS then
-    centered(55, 84, 205, "GPS INVALIDE", MIDSIZE + BOLD + colors.sink)
+    centered(originX + mapW * 0.17, originY + mapH * 0.40, mapW * 0.66,
+      "GPS INVALIDE", MIDSIZE + BOLD + colors.sink)
   elseif w.pendingHome then
-    centered(55, 84, 205, "ATTENTE HOME", MIDSIZE + BOLD + colors.text)
+    centered(originX + mapW * 0.17, originY + mapH * 0.40, mapW * 0.66,
+      "ATTENTE HOME", MIDSIZE + BOLD + colors.text)
   end
 
   local runningTime = (w.raceState >= 1 and w.raceState <= 3) and timerValue(w) or w.raceTotal
@@ -833,7 +946,7 @@ local function drawFullScreen(w)
   }
   local tileW = width / 6
   for i = 1, 6 do
-    drawTile((i - 1) * tileW, mapH, tileW, tileH,
+    drawTile(originX + (i - 1) * tileW, originY + mapH, tileW, tileH,
       values[i][1], values[i][2], values[i][3], colors)
   end
 end
@@ -856,13 +969,14 @@ local function drawCompact(w)
 end
 
 local function placePointFromTouch(w, screenX, screenY)
-  local size = MAP_SIZES[w.zoom]
-  local anchorX, anchorY = 315 * 0.50, 210 * 0.667
+  local size = w.mapSizes[w.zoom]
+  local layout = w.layout or { mapX=0, mapY=0, mapW=315, mapH=210 }
+  local anchorX, anchorY = layout.mapW * 0.50, layout.mapH * 0.667
   local area = w.mapDef.area
   local aircraftWorldX = size * 0.5 + w.mapX / area * size
   local aircraftWorldY = size * (2 / 3) - w.mapY / area * size
-  local worldX = aircraftWorldX - anchorX + screenX
-  local worldY = aircraftWorldY - anchorY + screenY
+  local worldX = aircraftWorldX - anchorX + (screenX - layout.mapX)
+  local worldY = aircraftWorldY - anchorY + (screenY - layout.mapY)
   local east = (worldX - size * 0.5) / size * area
   local north = (size * (2 / 3) - worldY) / size * area
   local lat, lon = mapLocalToGPS(w, east, north)
@@ -873,29 +987,16 @@ local function placePointFromTouch(w, screenX, screenY)
 end
 
 local function handleFullScreenEvent(w, event, touchState)
-  if (event == EVT_TOUCH_FIRST or event == EVT_TOUCH_TAP) and touchState
-    and getTime() - w.lastTouchAt > 30 then
-    w.lastTouchAt = getTime()
-    local tx, ty = touchState.x, touchState.y
-    if tx >= 242 and tx <= 310 and ty >= 27 and ty <= 70 then
-      w.zoomEdit = not w.zoomEdit
-    end
-  elseif w.zoomEdit and (event == EVT_VIRTUAL_INC or event == EVT_VIRTUAL_INC_REPT
-    or event == EVT_VIRTUAL_NEXT or event == EVT_VIRTUAL_NEXT_REPT) then
-    w.zoom = math.min(4, w.zoom + 1)
-    w.mapCacheLevel = 0
-  elseif w.zoomEdit and (event == EVT_VIRTUAL_DEC or event == EVT_VIRTUAL_DEC_REPT
-    or event == EVT_VIRTUAL_PREV or event == EVT_VIRTUAL_PREV_REPT) then
-    w.zoom = math.max(1, w.zoom - 1)
-    w.mapCacheLevel = 0
-  end
+  -- Le zoom manuel tactile/molette a ete retire. Le zoom du widget est gere
+  -- exclusivement par la source analogique ZoomPot.
 end
 
 local function refresh(w, event, touchState)
   process(w)
-  -- En plein ecran EdgeTX fournit event (0 si aucune touche). Dans une case
-  -- normale event et touchState valent nil.
-  if event ~= nil or (w.zone.w >= LCD_W - 4 and w.zone.h >= LCD_H - 4) then
+  -- Certaines cibles transmettent event=0 meme aux widgets en petite case.
+  -- La taille de la zone est donc le seul critere fiable pour le plein ecran.
+  local full = w.zone.w >= LCD_W * 0.85 and w.zone.h >= LCD_H * 0.70
+  if full then
     handleFullScreenEvent(w, event, touchState)
     drawFullScreen(w)
   else

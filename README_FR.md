@@ -21,18 +21,24 @@ Assistant de vol à voile pour RadioMaster TX16S sous EdgeTX 2.11.7. Il affiche 
 ## Utilisation sur la radio
 
 1. Ajouter le widget **Thermal** sur une page plein écran.
-2. Ouvrir `SYS` → page des outils → **Réglages Triangle**.
+2. Ouvrir `SYS` → page des outils → **Réglages Triangle**. Cet écran s'adapte lui aussi automatiquement à la résolution de la radio.
 3. Toucher **CARTE** pour choisir le terrain.
 4. Choisir A, B ou C, puis toucher la carte pour placer le point.
 5. Régler le rayon et les altitudes minimale et maximale.
 6. Appuyer sur **SAUVER**. Le widget charge automatiquement la carte et le triangle du modèle actif.
 7. Utiliser **EFFACER** pour voler sans triangle.
 
-La carte est orientée nord et possède quatre niveaux de zoom. Le widget ne produit aucun son de variomètre : le vario sonore reste géré par le widget VARIO séparé.
+La carte est orientée nord et possède trois niveaux de zoom. Le widget adapte automatiquement sa mise en page à la résolution de la radio, notamment aux écrans 480 × 272 et 800 × 480 de la TX16S MK3.
+
+Dans les options du widget, **ZoomPot** permet de choisir un potentiomètre ou un slider EdgeTX. Ses trois positions correspondent aux niveaux Z1, Z2 et Z3. Le sens est inversé : glisseur vers le haut pour Z1, vers le bas pour Z3. Si **ZoomPot** reste vide, la carte reste au niveau Z1. L'ancien bouton tactile `ZOOM` et le mode molette ont été retirés.
+
+Le widget ne produit aucun son de variomètre : le vario sonore reste géré séparément.
 
 ## Gestion des cartes
 
-Le gestionnaire Windows permet de prévisualiser, installer, copier et effacer les cartes du PC ou de la TX16S. Une carte standard couvre 5 × 5 km et contient 193 tuiles.
+Le gestionnaire Windows permet de prévisualiser, installer, copier et effacer les cartes du PC ou de la TX16S. Une carte standard couvre 5 × 5 km. Chaque nouvelle carte contient deux pyramides de tuiles : un profil 480 pour les TX16S MK1/MK2 et un profil 800 pour la TX16S MK3. Le widget choisit automatiquement le profil correspondant à son écran.
+
+Les anciennes cartes au format 315 pixels restent lisibles en mode de compatibilité, mais elles ne peuvent pas remplir correctement l'écran 800 × 480. Elles doivent être régénérées avec cette version du gestionnaire pour supprimer les marges et les zones manquantes sur la MK3.
 
 ### Cartes hors de Suisse
 

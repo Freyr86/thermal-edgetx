@@ -29,8 +29,9 @@ from PIL import Image
 SOURCE_ZOOM = 16
 SOURCE_TILE = 256
 EDGE_TILE = 210
-LEVEL_BASE = 315
-LEVELS = 4
+PROFILE_BASES = {"480": 480, "800": 800}
+PROFILE_TILES = {"480": 210, "800": 400}
+LEVELS = 3
 SWISSIMAGE = (
     "https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/"
     "default/current/3857/{z}/{x}/{y}.jpeg"
@@ -334,27 +335,37 @@ def build_source(lat: float, lon: float, size_m: float, progress=None,
 
 def save_pack(source: Image.Image, pack_dir: Path, progress=None) -> None:
     pack_dir.mkdir(parents=True, exist_ok=True)
-    total_tiles = sum(math.ceil(LEVEL_BASE * (2**level) / EDGE_TILE) ** 2
-                      for level in range(LEVELS))
+    total_tiles = sum(
+        math.ceil(base * (2**level) / PROFILE_TILES[profile]) ** 2
+        for profile, base in PROFILE_BASES.items() for level in range(LEVELS)
+    )
     completed = 0
-    for level in range(LEVELS):
-        size = LEVEL_BASE * (2**level)
-        folder = pack_dir / f"Z{level}"
-        folder.mkdir(exist_ok=True)
-        scaled = source.resize((size, size), Image.Resampling.LANCZOS)
-        count = math.ceil(size / EDGE_TILE)
-        for row in range(count):
-            for col in range(count):
-                tile = Image.new("RGB", (EDGE_TILE, EDGE_TILE), (30, 45, 35))
-                region = scaled.crop((col * EDGE_TILE, row * EDGE_TILE,
-                                      min((col + 1) * EDGE_TILE, size),
-                                      min((row + 1) * EDGE_TILE, size)))
-                tile.paste(region)
-                tile.quantize(colors=128).save(folder / f"{col}_{row}.png", optimize=True)
-                completed += 1
-                if progress:
-                    progress(completed, total_tiles, "Création des tuiles")
-        print(f"Zoom {level + 1} : {count * count} tuiles", flush=True)
+    for profile, base in PROFILE_BASES.items():
+        edge_tile = PROFILE_TILES[profile]
+        profile_dir = pack_dir / profile
+        if profile_dir.exists():
+            shutil.rmtree(profile_dir)
+        for level in range(LEVELS):
+            size = base * (2**level)
+            folder = profile_dir / f"Z{level}"
+            folder.mkdir(parents=True, exist_ok=True)
+            scaled = source.resize((size, size), Image.Resampling.LANCZOS)
+            count = math.ceil(size / edge_tile)
+            for row in range(count):
+                for col in range(count):
+                    tile = Image.new("RGB", (edge_tile, edge_tile), (30, 45, 35))
+                    region = scaled.crop((col * edge_tile, row * edge_tile,
+                                          min((col + 1) * edge_tile, size),
+                                          min((row + 1) * edge_tile, size)))
+                    tile.paste(region)
+                    tile.quantize(colors=128).save(
+                        folder / f"{col}_{row}.png", optimize=True)
+                    completed += 1
+                    if progress:
+                        progress(completed, total_tiles,
+                                 f"Tuiles {profile} - zoom {level + 1}")
+            print(f"Profil {profile}, zoom {level + 1} : "
+                  f"{count * count} tuiles", flush=True)
 
 
 def update_index(target: Path, slug: str, label: str, lat: float, lon: float, size_m: int) -> None:
