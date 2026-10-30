@@ -32,6 +32,8 @@ The map is north-up and has three zoom levels. The layout automatically adapts t
 
 Use **ZoomPot** in the widget options to select an EdgeTX potentiometer or slider. Its three positions select Z1, Z2, and Z3. The direction is reversed: slider up selects Z1 and slider down selects Z3. If **ZoomPot** is left unset, the map stays at Z1. The former touch `ZOOM` button and rotary-wheel mode have been removed.
 
+The **Recentre** option controls how far the aircraft may move from the map centre before the view follows it again. The recommended value `70` keeps the map fixed until the aircraft reaches 70% of the centre-to-edge distance, then recentres it. Set it to `0` for continuous following.
+
 This widget produces no variometer audio; vario sound is handled separately.
 
 ## Managing maps

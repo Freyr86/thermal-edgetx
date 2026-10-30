@@ -32,6 +32,8 @@ La carte est orientée nord et possède trois niveaux de zoom. Le widget adapte 
 
 Dans les options du widget, **ZoomPot** permet de choisir un potentiomètre ou un slider EdgeTX. Ses trois positions correspondent aux niveaux Z1, Z2 et Z3. Le sens est inversé : glisseur vers le haut pour Z1, vers le bas pour Z3. Si **ZoomPot** reste vide, la carte reste au niveau Z1. L'ancien bouton tactile `ZOOM` et le mode molette ont été retirés.
 
+L'option **Recentre** définit à quelle distance du centre la carte doit suivre de nouveau le planeur. La valeur recommandée `70` laisse la carte fixe jusqu'à 70 % de la distance entre le centre et le bord, puis recentre le modèle. La valeur `0` rétablit le suivi continu.
+
 Le widget ne produit aucun son de variomètre : le vario sonore reste géré séparément.
 
 ## Gestion des cartes

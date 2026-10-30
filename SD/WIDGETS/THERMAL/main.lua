@@ -24,7 +24,9 @@ local options = {
   { "Sortie",   FILE, "", "SOUNDS" },
   { "ResetSw",  SWITCH, 0 },
   -- Place en dernier pour ne pas decaler les options des versions existantes.
-  { "ZoomPot",  SOURCE, 0 }
+  { "ZoomPot",  SOURCE, 0 },
+  -- Pourcentage de la demi-largeur/hauteur avant recentrage. 0 = suivi continu.
+  { "Recentre", VALUE, 70, 0, 90 }
 }
 
 local function clamp(v, lo, hi)
@@ -117,6 +119,7 @@ local function loadMapSelection(w)
     w.mapCacheLevel = 0
     w.mapCacheCount = 0
     w.track = {}
+    w.viewMapX, w.viewMapY, w.viewZoom = nil, nil, 0
   end
   configureMapProfile(w)
 end
@@ -216,6 +219,7 @@ local function resetFlight(w)
   w.y = 0
   w.distance = 0
   w.track = {}
+  w.viewMapX, w.viewMapY, w.viewZoom = nil, nil, 0
   w.filteredVspd = nil
   w.lastHdg = nil
   w.lastHdgTime = nil
@@ -323,6 +327,9 @@ local function create(zone, opts)
     sats = 0,
     mapX = 0,
     mapY = 0,
+    viewMapX = nil,
+    viewMapY = nil,
+    viewZoom = 0,
     zoom = 1,
     zoomFromPot = false,
     zoomPotScale = 1,
@@ -628,11 +635,21 @@ local function drawMap(w, x, y, width, height, colors)
   lcd.drawFilledRectangle(x, y, width, height, colors.mapBg)
   local level = clamp(w.zoom or 1, 1, 3)
   local size = w.mapSizes[level]
-  local anchorX, anchorY = width * 0.50, height * 0.667
   local area = w.mapDef.area
-  local aircraftWorldX = size * 0.5 + w.mapX / area * size
-  local aircraftWorldY = size * (2 / 3) - w.mapY / area * size
-  local left, top = aircraftWorldX - anchorX, aircraftWorldY - anchorY
+  local scale = size / area
+  if w.viewMapX == nil or w.viewMapY == nil or w.viewZoom ~= level then
+    w.viewMapX, w.viewMapY, w.viewZoom = w.mapX, w.mapY, level
+  end
+  local dx = (w.mapX - w.viewMapX) * scale
+  local dy = (w.mapY - w.viewMapY) * scale
+  local threshold = clamp(tonumber(w.options.Recentre) or 70, 0, 90) / 100
+  if threshold == 0 or math.abs(dx) > width * 0.5 * threshold
+    or math.abs(dy) > height * 0.5 * threshold then
+    w.viewMapX, w.viewMapY = w.mapX, w.mapY
+  end
+  local viewWorldX = size * 0.5 + w.viewMapX * scale
+  local viewWorldY = size * (2 / 3) - w.viewMapY * scale
+  local left, top = viewWorldX - width * 0.5, viewWorldY - height * 0.5
   local tileSize = w.mapTile or LEGACY_MAP_TILE
   local firstCol = math.floor(left / tileSize)
   local lastCol = math.floor((left + width) / tileSize)
@@ -757,7 +774,9 @@ local function drawMap(w, x, y, width, height, colors)
     end
   end
 
-  local cx, cy = x + anchorX, y + anchorY
+  local aircraftWorldX = size * 0.5 + w.mapX * scale
+  local aircraftWorldY = size * (2 / 3) - w.mapY * scale
+  local cx, cy = x + aircraftWorldX - left, y + aircraftWorldY - top
   local a = w.heading * DEG
   local tipX, tipY = cx + math.sin(a) * 15, cy - math.cos(a) * 15
   local leftX, leftY = cx + math.sin(a + 2.45) * 10, cy - math.cos(a + 2.45) * 10
