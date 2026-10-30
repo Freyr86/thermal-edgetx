@@ -1,10 +1,10 @@
 # THERMAL pour EdgeTX
 
-Assistant de vol à voile pour RadioMaster TX16S sous EdgeTX 2.11.7. Il affiche une carte satellite hors ligne, la trace GPS, une roue thermique et un triangle à trois points avec chronométrage.
+Assistant de vol à voile pour RadioMaster TX16S sous EdgeTX 2.11.7 ou version ultérieure. Il affiche une carte satellite hors ligne, la trace GPS, une roue thermique et un triangle à trois points avec chronométrage.
 
 ## Matériel et télémétrie
 
-- RadioMaster TX16S sous EdgeTX 2.11.7 ou version compatible.
+- RadioMaster TX16S sous EdgeTX 2.11.7 ou version ultérieure compatible, notamment EdgeTX 2.12 sur la TX16S MK3.
 - Récepteur avec variomètre et GPS.
 - Capteurs nommés : `Alt`, `VSpd`, `GPS`, `GSpd`, `Hdg`, `GAlt` et `Sats`.
 
@@ -35,6 +35,16 @@ Dans les options du widget, **ZoomPot** permet de choisir un potentiomètre ou u
 L'option **Recentre** définit à quelle distance du centre la carte doit suivre de nouveau le planeur. La valeur recommandée `70` laisse la carte fixe jusqu'à 70 % de la distance entre le centre et le bord, puis recentre le modèle. La valeur `0` rétablit le suivi continu.
 
 Le widget ne produit aucun son de variomètre : le vario sonore reste géré séparément.
+
+### Activer le variomètre sonore EdgeTX
+
+1. Allumer le modèle et vérifier que le capteur `VSpd` reçoit bien une valeur.
+2. Ouvrir **Réglages du modèle** → **Télémétrie** → **Variomètre**.
+3. Sélectionner `VSpd` comme **Source**, puis régler la plage de montée/descente et la zone neutre **Centre**. Choisir **Silencieux** pour ne produire aucun son dans cette zone.
+4. Dans **Fonctions spéciales**, créer une fonction commandée par l'interrupteur souhaité, sélectionner **Vario**, puis cocher son activation.
+5. Régler le volume, les fréquences et la répétition dans **Réglages radio** → **Sons/Vibrations** → **Variomètre**.
+
+Cette fonction sonore est entièrement gérée par EdgeTX et peut fonctionner en même temps que le widget THERMAL. Ne pas sélectionner `Alt`, `GAlt` ou une moyenne calculée à la place de `VSpd`.
 
 ## Gestion des cartes
 

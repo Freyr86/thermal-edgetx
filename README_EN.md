@@ -1,10 +1,10 @@
 # THERMAL for EdgeTX
 
-A soaring assistant for the RadioMaster TX16S running EdgeTX 2.11.7. It displays an offline satellite map, GPS track, thermal wheel, and a timed three-point triangle.
+A soaring assistant for the RadioMaster TX16S running EdgeTX 2.11.7 or later. It displays an offline satellite map, GPS track, thermal wheel, and a timed three-point triangle.
 
 ## Hardware and telemetry
 
-- RadioMaster TX16S running EdgeTX 2.11.7 or a compatible release.
+- RadioMaster TX16S running EdgeTX 2.11.7 or a later compatible release, including EdgeTX 2.12 on the TX16S MK3.
 - Receiver with a variometer and GPS.
 - Sensors named `Alt`, `VSpd`, `GPS`, `GSpd`, `Hdg`, `GAlt`, and `Sats`.
 
@@ -35,6 +35,16 @@ Use **ZoomPot** in the widget options to select an EdgeTX potentiometer or slide
 The **Recentre** option controls how far the aircraft may move from the map centre before the view follows it again. The recommended value `70` keeps the map fixed until the aircraft reaches 70% of the centre-to-edge distance, then recentres it. Set it to `0` for continuous following.
 
 This widget produces no variometer audio; vario sound is handled separately.
+
+### Enabling the EdgeTX audio variometer
+
+1. Power on the model and verify that the `VSpd` sensor is receiving data.
+2. Open **Model settings** → **Telemetry** → **Variometer**.
+3. Select `VSpd` as the **Source**, then configure the climb/sink range and the neutral **Center** range. Select **Silent** to produce no sound inside that neutral range.
+4. In **Special Functions**, add a function controlled by the desired switch, select **Vario**, and enable its checkbox.
+5. Configure its volume, frequencies, and repetition under **Radio settings** → **Sounds/Vibration** → **Variometer**.
+
+EdgeTX handles this audio function directly, and it can run at the same time as the THERMAL widget. Do not select `Alt`, `GAlt`, or a calculated average instead of `VSpd`.
 
 ## Managing maps
 
