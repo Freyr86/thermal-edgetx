@@ -34,6 +34,30 @@ Use **ZoomPot** in the widget options to select an EdgeTX potentiometer or slide
 
 The **Recentre** option controls how far the aircraft may move from the map centre before the view follows it again. The recommended value `70` keeps the map fixed until the aircraft reaches 70% of the centre-to-edge distance, then recentres it. Set it to `0` for continuous following.
 
+### Triangle sounds and laps
+
+The widget options provide three independent sound files from the `SOUNDS` folder:
+
+- **Start**: first valid exit from zone A and timer start.
+- **Next**: validation of B, C, and A between consecutive laps.
+- **Finish**: return to A after the requested final lap.
+
+**ToursMax** selects the number of laps. Set it to `0` for unlimited mode: every completed triangle increments the lap counter, the timer keeps running, and **Finish** is never played. With a value above zero, the widget displays completed and remaining laps, then stops the timer and plays **Finish** when the requested count is reached. **ResetSw** resets both the timer and lap counter.
+
+The lap count has its own margin to the left of the timing tiles. **CarteSw** accepts an EdgeTX physical or logical switch. While active, it hides the complete interface and expands the map to the full screen, retaining the track, aircraft and A/B/C points. Triangle processing, sounds and timers continue in the background.
+
+### Thermal markers and flight recording
+
+- **MarkSw**: each activation places a numbered orange marker at the current GPS position. The latest 30 markers in the session are retained to help locate thermals again.
+- **LogSw**: recording starts while the selected switch is active and stops when it becomes inactive. A red **REC** indicator confirms recording.
+- **MotorSrc**: EdgeTX output or source representing the motor command (for example `CH3`).
+- **MotorOn**: motor-on threshold in percent. For a command ranging from -100 to +100%, the default `-80` treats the motor as active as soon as the command rises above -80%.
+- **MotInv**: reverses detection when the motor channel operates in the opposite direction.
+
+Motor state is not displayed on screen. It is only stored with each recorded point in the IGC `MOP` extension (`000` off, `999` on). Tracks are recorded once per second as `/LOGS/THM-YYYYMMDD-HHMMSS.igc`. IGC files can be opened by XCSoar and common soaring-flight analysis applications. Files produced by this Lua script are unsigned and are not an approved flight recorder for official competitions or records.
+
+`LogSw` may be enabled before GPS lock: the file is created immediately, then fixes are appended automatically as soon as GPS becomes valid. Position must be valid and the satellite count must reach **MinSats**. `MarkSw` ignores an activation without valid GPS; activate it again after lock. Every new activation of `LogSw` creates a new file. At one fix per second, one flight hour uses only about 150 KB.
+
 This widget produces no variometer audio; vario sound is handled separately.
 
 ### Enabling the EdgeTX audio variometer

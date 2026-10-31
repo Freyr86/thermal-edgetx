@@ -20,13 +20,25 @@ local options = {
   { "TrackStep",VALUE, 3, 1, 30 },
   { "TurnRate", VALUE, 6, 2, 30 },
   { "VarioMax", VALUE, 5, 1, 10 },
-  { "Entree",   FILE, "", "SOUNDS" },
-  { "Sortie",   FILE, "", "SOUNDS" },
+  { "Start",    FILE, "", "SOUNDS" },
+  { "Next",     FILE, "", "SOUNDS" },
   { "ResetSw",  SWITCH, 0 },
   -- Place en dernier pour ne pas decaler les options des versions existantes.
   { "ZoomPot",  SOURCE, 0 },
   -- Pourcentage de la demi-largeur/hauteur avant recentrage. 0 = suivi continu.
-  { "Recentre", VALUE, 70, 0, 90 }
+  { "Recentre", VALUE, 70, 0, 90 },
+  { "Finish",   FILE, "", "SOUNDS" },
+  -- 0 = tours illimites. Sinon, Finish est joue apres ce nombre de tours.
+  { "ToursMax", VALUE, 0, 0, 99 },
+  -- Interrupteur physique ou logique : carte seule lorsqu'il est actif.
+  { "CarteSw",  SWITCH, 0 },
+  -- MarkSw pose un repere thermique, LogSw commande l'enregistrement IGC.
+  { "MarkSw",   SWITCH, 0 },
+  { "LogSw",    SWITCH, 0 },
+  -- Sortie moteur et seuil en pourcentage. MotInv couvre une voie inversee.
+  { "MotorSrc", SOURCE, 0 },
+  { "MotorOn",  VALUE, -80, -100, 100 },
+  { "MotInv",   BOOL, 0 }
 }
 
 local function clamp(v, lo, hi)
@@ -38,6 +50,62 @@ end
 local function round(v)
   if v >= 0 then return math.floor(v + 0.5) end
   return math.ceil(v - 0.5)
+end
+
+local function cleanText(value)
+  local text = tostring(value or "")
+  text = string.gsub(text, "[^%w%-%_ ]", "_")
+  return string.sub(text, 1, 32)
+end
+
+-- Conversion du timestamp Unix de la radio en date/heure UTC pour l'IGC.
+local function utcDateTime()
+  local timestamp = getRtcTime and getRtcTime() or nil
+  if type(timestamp) ~= "number" or timestamp < 86400 then
+    local dt = getDateTime()
+    return dt.year, dt.mon, dt.day, dt.hour, dt.min, dt.sec
+  end
+
+  local days = math.floor(timestamp / 86400)
+  local seconds = timestamp - days * 86400
+  local hour = math.floor(seconds / 3600)
+  seconds = seconds - hour * 3600
+  local minute = math.floor(seconds / 60)
+  local second = seconds - minute * 60
+
+  local z = days + 719468
+  local era = math.floor(z / 146097)
+  local doe = z - era * 146097
+  local yoe = math.floor((doe - math.floor(doe / 1460)
+    + math.floor(doe / 36524) - math.floor(doe / 146096)) / 365)
+  local year = yoe + era * 400
+  local doy = doe - (365 * yoe + math.floor(yoe / 4) - math.floor(yoe / 100))
+  local mp = math.floor((5 * doy + 2) / 153)
+  local day = doy - math.floor((153 * mp + 2) / 5) + 1
+  local month = mp + (mp < 10 and 3 or -9)
+  if month <= 2 then year = year + 1 end
+  return year, month, day, hour, minute, second
+end
+
+local function igcCoordinate(value, longitude)
+  local absolute = math.abs(value)
+  local degrees = math.floor(absolute)
+  local minutes1000 = math.floor((absolute - degrees) * 60000 + 0.5)
+  if minutes1000 >= 60000 then
+    degrees = degrees + 1
+    minutes1000 = 0
+  end
+  local hemisphere
+  if longitude then
+    hemisphere = value >= 0 and "E" or "W"
+    return string.format("%03d%05d%s", degrees, minutes1000, hemisphere)
+  end
+  hemisphere = value >= 0 and "N" or "S"
+  return string.format("%02d%05d%s", degrees, minutes1000, hemisphere)
+end
+
+local function igcAltitude(value)
+  return string.format("%05d", clamp(round(value or 0), -9999, 99999))
 end
 
 local function wrap180(v)
@@ -316,6 +384,8 @@ local function create(zone, opts)
     lastProcess = 0,
     lastHomeSwitch = false,
     lastResetSwitch = false,
+    lastMarkSwitch = false,
+    lastLogSwitch = false,
     pendingHome = false,
     validGPS = false,
     validVario = false,
@@ -325,6 +395,8 @@ local function create(zone, opts)
     heading = 0,
     galt = 0,
     sats = 0,
+    gpsLat = nil,
+    gpsLon = nil,
     mapX = 0,
     mapY = 0,
     viewMapX = nil,
@@ -347,9 +419,18 @@ local function create(zone, opts)
     returnAValid = false,
     raceState = 0,
     raceStart = nil,
+    lapStartValue = 0,
+    lapsCompleted = 0,
     splitB = nil,
     splitC = nil,
-    raceTotal = nil
+    raceTotal = nil,
+    markers = {},
+    logging = false,
+    logPath = nil,
+    lastLogAt = -100,
+    logError = false,
+    motorPercent = nil,
+    motorOn = false
   }
   acquireIds(w)
   w.logo = Bitmap.open("/WIDGETS/THERMAL/logo.png")
@@ -397,8 +478,91 @@ local function updateZoomFromPot(w)
   end
 end
 
+local function updateMotor(w)
+  local source = w.options.MotorSrc
+  if not source or source == 0 then
+    w.motorPercent, w.motorOn = nil, false
+    return
+  end
+  local value = getValue(source)
+  if type(value) ~= "number" then
+    w.motorPercent, w.motorOn = nil, false
+    return
+  end
+  local absolute = math.abs(value)
+  if absolute > 110 then
+    value = value / 10.24
+  elseif absolute <= 1.1 then
+    value = value * 100
+  end
+  value = clamp(value, -100, 100)
+  if w.options.MotInv == 1 then value = -value end
+  w.motorPercent = value
+  w.motorOn = value >= (w.options.MotorOn or -80)
+end
+
 local function playSelectedSound(filename)
   if type(filename) == "string" and filename ~= "" then playFile(filename) end
+end
+
+local function startLog(w)
+  local year, month, day, hour, minute, second = utcDateTime()
+  local filename = string.format("THM-%04d%02d%02d-%02d%02d%02d.igc",
+    year, month, day, hour, minute, second)
+  local path = "/LOGS/" .. filename
+  local file = io.open(path, "w")
+  if not file then
+    w.logging, w.logError = false, true
+    return
+  end
+  local info = model.getInfo()
+  local modelName = cleanText(info and info.name or "MODEL")
+  io.write(file, "AXTX001\n")
+  io.write(file, string.format("HFDTE%02d%02d%02d\n", day, month, year % 100))
+  io.write(file, "HFFXA100\n")
+  io.write(file, "HFRFWFIRMWAREVERSION:EdgeTX Lua\n")
+  io.write(file, "HFGTYGLIDERTYPE:" .. modelName .. "\n")
+  io.write(file, "HFGPSGPS:RadioMaster telemetry GPS\n")
+  -- Extension MOP (Means Of Propulsion), colonnes 36 a 38.
+  io.write(file, "I013638MOP\n")
+  io.write(file, "LTXTNON CERTIFIED FLIGHT LOG\n")
+  io.close(file)
+  w.logging = true
+  w.logError = false
+  w.logPath = path
+  w.lastLogAt = -100
+end
+
+local function stopLog(w)
+  w.logging = false
+end
+
+local function logFix(w, now)
+  if not w.logging or not w.validGPS or not w.gpsLat or not w.gpsLon then return end
+  if now - w.lastLogAt < 100 then return end
+  w.lastLogAt = now
+  local _, _, _, hour, minute, second = utcDateTime()
+  local altitude = w.galt or 0
+  local record = string.format("B%02d%02d%02d%s%sA%s%s%03d\n",
+    hour, minute, second,
+    igcCoordinate(w.gpsLat, false), igcCoordinate(w.gpsLon, true),
+    igcAltitude(altitude), igcAltitude(altitude), w.motorOn and 999 or 0)
+  local file = io.open(w.logPath, "a")
+  if not file then
+    w.logging, w.logError = false, true
+    return
+  end
+  io.write(file, record)
+  io.close(file)
+end
+
+local function addMarker(w)
+  if not w.validGPS or not w.gpsLat or not w.gpsLon then return end
+  w.markers[#w.markers + 1] = {
+    x = w.mapX, y = w.mapY, lat = w.gpsLat, lon = w.gpsLon,
+    alt = w.galt, time = getTime()
+  }
+  if #w.markers > 30 then table.remove(w.markers, 1) end
 end
 
 local function timerIndex(w)
@@ -433,6 +597,8 @@ end
 local function resetRace(w)
   w.raceState = 0       -- attente d'une entree puis d'une sortie de A
   w.raceStart = nil
+  w.lapStartValue = 0
+  w.lapsCompleted = 0
   w.splitB = nil
   w.splitC = nil
   w.raceTotal = nil
@@ -446,7 +612,48 @@ end
 
 local function elapsedSinceStart(w, now)
   if not w.raceStart then return nil end
-  return timerValue(w)
+  return math.max(0, timerValue(w) - (w.lapStartValue or 0))
+end
+
+local function maximumLaps(w)
+  return math.max(0, math.floor(tonumber(w.options.ToursMax) or 0))
+end
+
+local function startRace(w, now)
+  w.raceStart = now
+  w.lapStartValue = 0
+  w.lapsCompleted = 0
+  w.splitB, w.splitC, w.raceTotal = nil, nil, nil
+  startInternalTimer(w)
+  w.raceState, w.activePoint = 1, 2
+  playSelectedSound(w.options.Start)
+end
+
+local function completeLap(w)
+  w.lapsCompleted = (w.lapsCompleted or 0) + 1
+  local maximum = maximumLaps(w)
+  if maximum > 0 and w.lapsCompleted >= maximum then
+    w.raceTotal = stopInternalTimer(w)
+    w.raceState = 4
+    playSelectedSound(w.options.Finish)
+  else
+    -- A devient un point intermediaire tant que le nombre de tours demande
+    -- n'est pas atteint. L'attente de la sortie de A evite un double comptage.
+    w.raceState = 5
+    playSelectedSound(w.options.Next)
+  end
+end
+
+local function validateActivePoint(w, now)
+  if w.raceState == 1 and w.activePoint == 2 and not w.splitB then
+    w.splitB = elapsedSinceStart(w, now)
+    playSelectedSound(w.options.Next)
+  elseif w.raceState == 2 and w.activePoint == 3 and not w.splitC then
+    w.splitC = elapsedSinceStart(w, now)
+    playSelectedSound(w.options.Next)
+  elseif w.raceState == 3 and w.activePoint == 1 then
+    completeLap(w)
+  end
 end
 
 local function pointGeometry(w, index)
@@ -472,43 +679,28 @@ local function updateTurnPoint(w)
   if inside and not w.pointInside then
     w.pointInside = true
     w.pointValid = altitudeValid(w, p)
-    playSelectedSound(w.options.Entree)
-    if w.pointValid then
-      if w.raceState == 1 and w.activePoint == 2 and not w.splitB then
-        w.splitB = elapsedSinceStart(w, now)
-      elseif w.raceState == 2 and w.activePoint == 3 and not w.splitC then
-        w.splitC = elapsedSinceStart(w, now)
-      elseif w.raceState == 3 and w.activePoint == 1 then
-        w.raceTotal = stopInternalTimer(w)
-        w.raceState = 4
-      end
-    end
+    if w.pointValid then validateActivePoint(w, now) end
   elseif not inside and w.pointInside then
-    playSelectedSound(w.options.Sortie)
     w.pointInside = false
     if w.pointValid then
       if w.raceState == 0 and w.activePoint == 1 then
-        w.raceStart = now
-        w.splitB, w.splitC, w.raceTotal = nil, nil, nil
-        startInternalTimer(w)
-        w.raceState, w.activePoint = 1, 2
+        startRace(w, now)
       elseif w.raceState == 1 and w.activePoint == 2 and w.splitB then
         w.raceState, w.activePoint = 2, 3
       elseif w.raceState == 2 and w.activePoint == 3 and w.splitC then
         w.raceState, w.activePoint = 3, 1
+      elseif w.raceState == 5 and w.activePoint == 1 then
+        -- Nouveau tour : le chrono general continue mais les passages B/C
+        -- sont mesures depuis cette sortie de A.
+        w.lapStartValue = timerValue(w)
+        w.splitB, w.splitC = nil, nil
+        w.raceState, w.activePoint = 1, 2
       end
     end
     w.pointValid = false
   elseif inside and altitudeValid(w, p) then
     w.pointValid = true
-    if w.raceState == 1 and w.activePoint == 2 and not w.splitB then
-      w.splitB = elapsedSinceStart(w, now)
-    elseif w.raceState == 2 and w.activePoint == 3 and not w.splitC then
-      w.splitC = elapsedSinceStart(w, now)
-    elseif w.raceState == 3 and w.activePoint == 1 then
-      w.raceTotal = stopInternalTimer(w)
-      w.raceState = 4
-    end
+    validateActivePoint(w, now)
   end
 
   -- Retour premature dans A : la prochaine sortie valide de A devient un
@@ -524,10 +716,7 @@ local function updateTurnPoint(w)
       elseif not insideA and w.returnAInside then
         w.returnAInside = false
         if w.returnAValid then
-          w.raceStart = now
-          w.splitB, w.splitC, w.raceTotal = nil, nil, nil
-          startInternalTimer(w)
-          w.raceState, w.activePoint = 1, 2
+          startRace(w, now)
           w.pointInside, w.pointValid = false, false
         end
         w.returnAValid = false
@@ -539,6 +728,7 @@ end
 local function process(w)
   local now = getTime()
   updateZoomFromPot(w)
+  updateMotor(w)
   if now - w.lastProcess < 4 then return end
   w.lastProcess = now
 
@@ -585,6 +775,9 @@ local function process(w)
   end
   w.validGPS = type(lat) == "number" and type(lon) == "number"
     and lat ~= 0 and lon ~= 0 and w.sats >= w.options.MinSats
+  if w.validGPS then
+    w.gpsLat, w.gpsLon = lat, lon
+  end
 
   local switchOn = false
   local homeSwitch = w.options.HomeSw
@@ -613,6 +806,25 @@ local function process(w)
     appendTrack(w, w.mapX, w.mapY)
     updateTurnPoint(w)
   end
+
+  local markOn = false
+  local markSwitch = w.options.MarkSw
+  if markSwitch and markSwitch ~= 0 then
+    markOn = getSwitchValue(markSwitch) == true
+  end
+  if markOn and not w.lastMarkSwitch then addMarker(w) end
+  w.lastMarkSwitch = markOn
+
+  local logOn = false
+  local logSwitch = w.options.LogSw
+  if logSwitch and logSwitch ~= 0 then
+    logOn = getSwitchValue(logSwitch) == true
+  end
+  if logOn ~= w.lastLogSwitch then
+    if logOn then startLog(w) else stopLog(w) end
+  end
+  w.lastLogSwitch = logOn
+  logFix(w, now)
 
   if w.validGPS and headingCurrent and w.filteredVspd ~= nil and (headingFresh or gpsFresh) then
     if w.lastHdg ~= nil and w.lastHdgTime ~= nil then
@@ -732,6 +944,19 @@ local function drawMap(w, x, y, width, height, colors)
     if p.lat and p.lon and p.lat ~= 0 and p.lon ~= 0 then
       local px, py = toMapLocal(w, p.lat, p.lon)
       pointScreen[i] = { project(px, py) }
+    end
+  end
+
+  -- Reperes thermiques poses manuellement pendant le vol.
+  for i = 1, #w.markers do
+    local marker = w.markers[i]
+    local mx, my = project(marker.x, marker.y)
+    if mx >= x + 7 and mx <= x + width - 7
+      and my >= y + 7 and my <= y + height - 7 then
+      lcd.drawCircle(mx, my, 7, colors.marker)
+      lcd.drawLine(mx - 9, my, mx + 9, my, SOLID, colors.marker)
+      lcd.drawLine(mx, my - 9, mx, my + 9, SOLID, colors.marker)
+      centered(mx - 12, my + 9, 24, tostring(i), (TINSIZE or 0) + colors.marker)
     end
   end
   for i = 1, 3 do
@@ -910,6 +1135,10 @@ local function formatRaceTime(seconds)
   return string.format("%d:%02d", minutes, seconds % 60)
 end
 
+local function switchActive(source)
+  return source and source ~= 0 and getSwitchValue(source) == true
+end
+
 local function drawFullScreen(w)
   local colors = {
     mapBg = lcd.RGB(250, 248, 207),
@@ -928,12 +1157,20 @@ local function drawFullScreen(w)
     maximum = lcd.RGB(255, 220, 0),
     triangle = lcd.RGB(255, 225, 0),
     point = lcd.RGB(30, 110, 230),
-    activePoint = lcd.RGB(235, 55, 35)
+    activePoint = lcd.RGB(235, 55, 35),
+    marker = lcd.RGB(255, 120, 0)
   }
 
   local z = w.zone
   local originX, originY = z.x or 0, z.y or 0
   local width, height = z.w or LCD_W, z.h or LCD_H
+  local mapOnly = switchActive(w.options.CarteSw)
+  if mapOnly then
+    w.layout = { mapX=originX, mapY=originY, mapW=width, mapH=height }
+    drawMap(w, originX, originY, width, height, colors)
+    return
+  end
+
   local tileH = clamp(math.floor(height * 0.23), 62, 92)
   local mapH = height - tileH
   local mapW = width
@@ -945,6 +1182,14 @@ local function drawFullScreen(w)
   drawMap(w, originX, originY, mapW, mapH, colors)
   drawThermal(w, wheelX, wheelY, wheelRadius, colors)
 
+  if w.logging then
+    lcd.drawFilledRectangle(originX + 6, originY + 28, 58, 20, colors.sink)
+    centered(originX + 6, originY + 30, 58, "REC", SMLSIZE + BOLD + WHITE)
+  elseif w.logError then
+    lcd.drawFilledRectangle(originX + 6, originY + 28, 85, 20, colors.sink)
+    centered(originX + 6, originY + 30, 85, "LOG ERR", (TINSIZE or 0) + WHITE)
+  end
+
   if not w.validGPS then
     centered(originX + mapW * 0.17, originY + mapH * 0.40, mapW * 0.66,
       "GPS INVALIDE", MIDSIZE + BOLD + colors.sink)
@@ -953,7 +1198,22 @@ local function drawFullScreen(w)
       "ATTENTE HOME", MIDSIZE + BOLD + colors.text)
   end
 
-  local runningTime = (w.raceState >= 1 and w.raceState <= 3) and timerValue(w) or w.raceTotal
+  local runningTime = ((w.raceState >= 1 and w.raceState <= 3) or w.raceState == 5)
+    and timerValue(w) or w.raceTotal
+  local maximum = maximumLaps(w)
+  local lapLabel
+  local lapValue
+  local lapUnit
+  if maximum == 0 then
+    lapLabel = "TOURS"
+    lapValue = tostring(w.lapsCompleted or 0)
+    lapUnit = w.raceState == 0 and "attente A" or "illimite"
+  else
+    lapLabel = "TOURS"
+    lapValue = tostring(w.lapsCompleted or 0) .. "/" .. tostring(maximum)
+    lapUnit = w.raceState == 4 and "termine"
+      or ("reste " .. tostring(math.max(0, maximum - (w.lapsCompleted or 0))))
+  end
   local values = {
     { "VARIO", w.validVario and string.format("%+.1f", w.vspd) or "---", "m/s" },
     { "ALT", w.validVario and tostring(round(w.alt)) or "---", "m" },
@@ -963,9 +1223,14 @@ local function drawFullScreen(w)
     { w.raceState == 4 and "TOTAL" or "CHRONO", formatRaceTime(runningTime),
       w.raceState == 0 and "attente A" or (w.raceState == 4 and "termine" or "en cours") }
   }
-  local tileW = width / 6
+  -- Le compteur de tours occupe une marge dediee a gauche. Les six cases
+  -- conservent ainsi le chrono separe des informations de tour.
+  local lapW = clamp(math.floor(width * 0.12), 58, 100)
+  drawTile(originX, originY + mapH, lapW, tileH,
+    lapLabel, lapValue, lapUnit, colors)
+  local tileW = (width - lapW) / 6
   for i = 1, 6 do
-    drawTile(originX + (i - 1) * tileW, originY + mapH, tileW, tileH,
+    drawTile(originX + lapW + (i - 1) * tileW, originY + mapH, tileW, tileH,
       values[i][1], values[i][2], values[i][3], colors)
   end
 end

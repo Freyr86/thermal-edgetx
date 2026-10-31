@@ -34,6 +34,30 @@ Dans les options du widget, **ZoomPot** permet de choisir un potentiomètre ou u
 
 L'option **Recentre** définit à quelle distance du centre la carte doit suivre de nouveau le planeur. La valeur recommandée `70` laisse la carte fixe jusqu'à 70 % de la distance entre le centre et le bord, puis recentre le modèle. La valeur `0` rétablit le suivi continu.
 
+### Sons et tours du triangle
+
+Les options du widget permettent de sélectionner trois fichiers sonores indépendants dans le dossier `SOUNDS` :
+
+- **Start** : première sortie valide de la zone A et démarrage du chrono.
+- **Next** : validation de B, de C et de A entre deux tours.
+- **Finish** : retour dans A après le dernier tour demandé.
+
+**ToursMax** définit le nombre de tours à effectuer. La valeur `0` active le mode illimité : chaque triangle complet augmente le compteur et le chrono continue sans jouer **Finish**. Avec une valeur supérieure à zéro, le widget affiche les tours effectués et le nombre restant, puis arrête le chrono et joue **Finish** lorsque le compte est atteint. La commande **ResetSw** remet le chrono et le compteur de tours à zéro.
+
+Le nombre de tours possède sa propre marge à gauche des cases de chronométrage. L'option **CarteSw** accepte un interrupteur physique ou logique EdgeTX. Lorsqu'il est actif, toute l'interface est masquée et la carte occupe l'écran complet avec la trace, le modèle et les points A/B/C. Le calcul du triangle, les sons et les chronos continuent de fonctionner en arrière-plan.
+
+### Marqueurs thermiques et enregistrement du vol
+
+- **MarkSw** : chaque activation pose un marqueur orange numéroté à la position GPS actuelle. Les 30 derniers marqueurs de la session sont conservés afin de retrouver les thermiques.
+- **LogSw** : l'enregistrement démarre lorsque l'interrupteur devient actif et s'arrête lorsqu'il devient inactif. Un indicateur rouge **REC** confirme l'enregistrement.
+- **MotorSrc** : sortie ou source EdgeTX qui représente la commande moteur (par exemple `CH3`).
+- **MotorOn** : seuil d'allumage du moteur, en pourcentage. Avec une commande allant de -100 à +100 %, la valeur par défaut `-80` considère le moteur actif dès que la commande dépasse -80 %.
+- **MotInv** : inverse la lecture si la voie moteur fonctionne dans l'autre sens.
+
+L'état moteur n'est pas affiché à l'écran. Il est uniquement ajouté à chaque point du fichier dans l'extension IGC `MOP` (`000` arrêté, `999` allumé). Les traces sont enregistrées une fois par seconde dans `/LOGS/THM-AAAAMMJJ-HHMMSS.igc`. Le format IGC peut être ouvert dans XCSoar et dans les logiciels courants d'analyse de vol à voile. Ces fichiers produits par un script Lua ne sont pas signés et ne constituent pas un enregistreur homologué pour une compétition ou un record officiel.
+
+`LogSw` peut être activé avant l'obtention du fix GPS : le fichier est créé immédiatement, puis les points sont ajoutés automatiquement dès que le GPS devient valide. La position doit être valide et le nombre de satellites doit atteindre **MinSats**. `MarkSw` ignore une activation sans GPS valide ; il faut l'actionner de nouveau après le fix. Chaque nouvelle activation de `LogSw` crée un nouveau fichier. À un point par seconde, une heure de vol occupe seulement environ 150 Ko.
+
 Le widget ne produit aucun son de variomètre : le vario sonore reste géré séparément.
 
 ### Activer le variomètre sonore EdgeTX
