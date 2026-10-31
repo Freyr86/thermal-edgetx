@@ -42,7 +42,7 @@ The widget options provide three independent sound files from the `SOUNDS` folde
 - **Next**: validation of B, C, and A between consecutive laps.
 - **Finish**: return to A after the requested final lap.
 
-**ToursMax** selects the number of laps. Set it to `0` for unlimited mode: every completed triangle increments the lap counter, the timer keeps running, and **Finish** is never played. With a value above zero, the widget displays completed and remaining laps, then stops the timer and plays **Finish** when the requested count is reached. **ResetSw** resets both the timer and lap counter.
+**ToursMax** selects the number of laps. Set it to `0` for unlimited mode: every completed triangle increments the lap counter, the timer keeps running, and **Finish** is never played. With a value above zero, the widget displays completed and remaining laps, then stops the timer and plays **Finish** when the requested count is reached. **ResetSw** resets the timer and lap counter and removes all thermal markers placed with **MarkSw**. It does not clear the GPS track or thermal wheel.
 
 The lap count has its own margin to the left of the timing tiles. **CarteSw** accepts an EdgeTX physical or logical switch. While active, it hides the complete interface and expands the map to the full screen, retaining the track, aircraft and A/B/C points. Triangle processing, sounds and timers continue in the background.
 

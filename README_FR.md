@@ -42,7 +42,7 @@ Les options du widget permettent de sélectionner trois fichiers sonores indépe
 - **Next** : validation de B, de C et de A entre deux tours.
 - **Finish** : retour dans A après le dernier tour demandé.
 
-**ToursMax** définit le nombre de tours à effectuer. La valeur `0` active le mode illimité : chaque triangle complet augmente le compteur et le chrono continue sans jouer **Finish**. Avec une valeur supérieure à zéro, le widget affiche les tours effectués et le nombre restant, puis arrête le chrono et joue **Finish** lorsque le compte est atteint. La commande **ResetSw** remet le chrono et le compteur de tours à zéro.
+**ToursMax** définit le nombre de tours à effectuer. La valeur `0` active le mode illimité : chaque triangle complet augmente le compteur et le chrono continue sans jouer **Finish**. Avec une valeur supérieure à zéro, le widget affiche les tours effectués et le nombre restant, puis arrête le chrono et joue **Finish** lorsque le compte est atteint. La commande **ResetSw** remet le chrono et le compteur de tours à zéro et efface tous les marqueurs thermiques posés avec **MarkSw**. Elle ne supprime ni la trace GPS ni la roue thermique.
 
 Le nombre de tours possède sa propre marge à gauche des cases de chronométrage. L'option **CarteSw** accepte un interrupteur physique ou logique EdgeTX. Lorsqu'il est actif, toute l'interface est masquée et la carte occupe l'écran complet avec la trace, le modèle et les points A/B/C. Le calcul du triangle, les sons et les chronos continuent de fonctionner en arrière-plan.
 

@@ -607,6 +607,9 @@ local function resetRace(w)
   w.pointValid = false
   w.returnAInside = false
   w.returnAValid = false
+  -- Les reperes thermiques poses manuellement appartiennent a la session.
+  -- ResetSw les efface avec le chrono et la progression du triangle.
+  w.markers = {}
   clearInternalTimer(w)
 end
 
