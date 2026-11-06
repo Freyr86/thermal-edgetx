@@ -216,14 +216,18 @@ local function viewPosition()
   local area = activeMap().area
   local wx = size * 0.5 + east / area * size
   local wy = size * (2 / 3) - north / area * size
-  return size, wx - ui.mapW * 0.5, wy - ui.mapH * 0.5
+  local function origin(center, span)
+    if size < span then return math.floor((size - span) / 2) end
+    return clamp(math.floor(center - span / 2), 0, size - span)
+  end
+  return size, origin(wx, ui.mapW), origin(wy, ui.mapH)
 end
 
 local function drawMap()
   local size, left, top = viewPosition()
   lcd.drawFilledRectangle(0, 0, ui.mapW, ui.mapH, lcd.RGB(35, 50, 40))
-  local firstCol, lastCol = math.floor(left / TILE), math.floor((left + ui.mapW) / TILE)
-  local firstRow, lastRow = math.floor(top / TILE), math.floor((top + ui.mapH) / TILE)
+  local firstCol, lastCol = math.floor(left / TILE), math.floor((left + ui.mapW - 1) / TILE)
+  local firstRow, lastRow = math.floor(top / TILE), math.floor((top + ui.mapH - 1) / TILE)
   local maxTile = math.ceil(size / TILE) - 1
   if cacheLevel ~= zoom then
     cache = {}
@@ -247,7 +251,6 @@ local function drawMap()
   for _ in pairs(cache) do cacheCount = cacheCount + 1 end
   local newLoads = 0
   local missingFiles = 0
-  local loadingFiles = 0
   for row = firstRow, lastRow do
     for col = firstCol, lastCol do
       if row >= 0 and col >= 0 and row <= maxTile and col <= maxTile then
@@ -269,17 +272,9 @@ local function drawMap()
           lcd.drawBitmap(cache[tileKey], col * TILE - left, row * TILE - top)
         elseif missing[tileKey] then
           missingFiles = missingFiles + 1
-        else
-          loadingFiles = loadingFiles + 1
         end
       end
     end
-  end
-  if loadingFiles > 0 and missingFiles == 0 then
-    lcd.drawFilledRectangle(0, 0, ui.mapW, ui.mapH, lcd.RGB(35, 50, 40))
-    centered(0, ui.mapH * 0.43, ui.mapW,
-      "CHARGEMENT Z" .. tostring(zoom), MIDSIZE + BOLD + WHITE)
-    return
   end
 
   local screen = {}
@@ -386,9 +381,13 @@ local function drawPanel()
     drawButton(minusX, buttonY, adjustW, adjustH, "-", blue, white)
     drawButton(plusX, buttonY, adjustW, adjustH, "+", blue, white)
   end
-  ui.zoomButton = rect(innerX, zoomY, innerW, zoomH)
-  drawButton(innerX, zoomY, innerW, zoomH,
-    zoomEdit and ("ZOOM ACTIF  Z" .. tostring(zoom)) or ("ZOOM  Z" .. tostring(zoom)),
+  ui.zoomMinus = rect(innerX, zoomY, adjustW, zoomH)
+  ui.zoomPlus = rect(innerX + innerW - adjustW, zoomY, adjustW, zoomH)
+  ui.zoomButton = rect(innerX + adjustW, zoomY, innerW - 2 * adjustW, zoomH)
+  drawButton(ui.zoomMinus.x, zoomY, adjustW, zoomH, "-", blue, white)
+  drawButton(ui.zoomPlus.x, zoomY, adjustW, zoomH, "+", blue, white)
+  drawButton(ui.zoomButton.x, zoomY, ui.zoomButton.w, zoomH,
+    points[selected].name .. "  Z" .. tostring(zoom),
     zoomEdit and lcd.RGB(235, 55, 35) or blue, white)
   local actionGap = pad * 2
   local actionW = (innerW - actionGap) / 2
@@ -432,6 +431,7 @@ end
 local function placePoint(tx, ty)
   local size, left, top = viewPosition()
   local wx, wy = left + tx, top + ty
+  if wx < 0 or wy < 0 or wx >= size or wy >= size then return end
   local east = (wx - size * 0.5) / size * activeMap().area
   local north = (size * (2 / 3) - wy) / size * activeMap().area
   points[selected].lat, points[selected].lon = toGPS(east, north)
@@ -439,7 +439,7 @@ end
 
 local function init()
   updateLayout()
-  if LCD_W > 500 then zoom = 2 end
+  zoom = 1
   loadMaps()
   loadPoints()
   if not loadMapSelection() then chooseNearestMap() end
@@ -475,6 +475,8 @@ local function run(event, touchState)
     elseif hit(ui.plusButtons[2], x, y) then adjust(2, 1)
     elseif hit(ui.minusButtons[3], x, y) then adjust(3, -1)
     elseif hit(ui.plusButtons[3], x, y) then adjust(3, 1)
+    elseif hit(ui.zoomMinus, x, y) then zoom = math.max(1, zoom - 1)
+    elseif hit(ui.zoomPlus, x, y) then zoom = math.min(3, zoom + 1)
     elseif hit(ui.zoomButton, x, y) then
       zoomEdit = not zoomEdit
     elseif hit(ui.clearButton, x, y) then
@@ -491,11 +493,9 @@ local function run(event, touchState)
   elseif zoomEdit and (event == EVT_VIRTUAL_INC or event == EVT_VIRTUAL_INC_REPT
     or event == EVT_VIRTUAL_NEXT or event == EVT_VIRTUAL_NEXT_REPT) then
     zoom = math.min(3, zoom + 1)
-    cacheLevel = 0
   elseif zoomEdit and (event == EVT_VIRTUAL_DEC or event == EVT_VIRTUAL_DEC_REPT
     or event == EVT_VIRTUAL_PREV or event == EVT_VIRTUAL_PREV_REPT) then
     zoom = math.max(1, zoom - 1)
-    cacheLevel = 0
   end
   drawScreen()
   return 0
